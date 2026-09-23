@@ -5,3 +5,4 @@ database.sqlite
 npm-debug.log*
 .vercel
 .env*
+auditoria-local/

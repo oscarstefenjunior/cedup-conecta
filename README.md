@@ -67,13 +67,15 @@ npm ci
 
 ### 2. Configurar o ambiente
 
-Crie ou edite `.env` na raiz, preservando configurações que já existam. Exemplo com valores fictícios:
+Crie ou edite `.env` na raiz, preservando configurações que já existam. **O README não contém credenciais reais.** Os nomes das variáveis são públicos; os valores reais de `DATABASE_URL` e `JWT_SECRET` são privados e devem ficar somente no `.env` local ou nas variáveis de ambiente da Vercel.
+
+Modelo sem credenciais (preencha os dois campos vazios antes de iniciar):
 
 ```dotenv
 PORT=3000
 NODE_ENV=development
-DATABASE_URL=postgresql://usuario:senha@localhost:5432/cedupconecta
-JWT_SECRET=substitua_por_um_segredo_aleatorio_longo
+DATABASE_URL=
+JWT_SECRET=
 ```
 
 Para gerar um segredo local:
@@ -82,7 +84,7 @@ Para gerar um segredo local:
 node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```
 
-Não publique o segredo nem a URL real do banco. `.env.local` não é carregado automaticamente pelos comandos Node atuais. Variáveis já fornecidas ao processo também podem configurar a aplicação.
+`PORT` e `NODE_ENV` são configurações comuns, não segredos. Nunca use exemplos da documentação como senha. Não publique o conteúdo do `.env`, tokens, senhas de usuários ou a URL real do banco. `.env.local` não é carregado automaticamente pelos comandos Node atuais. Variáveis já fornecidas ao processo também podem configurar a aplicação.
 
 **Conexão remota:** atualmente o código desativa SSL fora de `production` e habilita SSL com `rejectUnauthorized: false` em `production`. Essa configuração precisa ser revista para o provedor escolhido, incluindo verificação do certificado. Não use `NODE_ENV=production` para tentar iniciar o servidor local: nessa condição o código atual não chama `listen()`.
 
