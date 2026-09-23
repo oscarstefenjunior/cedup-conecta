@@ -12,7 +12,14 @@ const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname)));
+
+const serveEstatico = express.static(path.join(__dirname), { dotfiles: 'deny', index: false });
+app.use((req, res, next) => {
+  const caminho = (req.path || '/').split('?')[0].replace(/^\/+/, '');
+  const permitido = caminho === '' || caminho === 'index.html' || caminho.startsWith('capas/') || caminho === 'images.png';
+  if (permitido) return serveEstatico(req, res, next);
+  return next();
+});
 
 function autenticar(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -31,19 +38,26 @@ function adminOnly(req, res, next) {
   next();
 }
 
+const handle = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+app.use((err, req, res, next) => {
+  console.error('Erro na rota:', err);
+  res.status(500).json({ erro: err.message || 'Erro interno' });
+});
+
 // ==================== AUTH ====================
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', handle(async (req, res) => {
   const { matricula, senha } = req.body;
   if (!matricula || !senha) return res.status(400).json({ erro: 'Matrícula e senha obrigatórias' });
 
-  const user = db.prepare('SELECT * FROM usuarios WHERE matricula = ?').get(matricula);
+  const user = await db.prepare('SELECT * FROM usuarios WHERE matricula = ?').get(matricula);
   if (!user) return res.status(401).json({ erro: 'Matrícula não encontrada' });
 
-  const senhaValida = bcrypt.compareSync(senha, user.senha_hash);
+  const senhaValida = bcrypt.compareSync(senha, user.senhaHash);
   if (!senhaValida) return res.status(401).json({ erro: 'Senha incorreta' });
 
-  const isAdmin = db.prepare('SELECT 1 FROM admins_matriculas WHERE matricula = ?').get(matricula);
+  const isAdmin = await db.prepare('SELECT 1 FROM admins_matriculas WHERE matricula = ?').get(matricula);
 
   const token = jwt.sign({
     matricula: user.matricula,
@@ -62,414 +76,460 @@ app.post('/api/login', (req, res) => {
       xp: user.xp || 0
     }
   });
-});
+}));
 
 // ==================== USUARIO ====================
 
-app.get('/api/usuario/perfil', autenticar, (req, res) => {
-  const user = db.prepare('SELECT matricula, nome, avatar, curso, xp FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
+app.get('/api/usuario/perfil', autenticar, handle(async (req, res) => {
+  const user = await db.prepare('SELECT matricula, nome, avatar, curso, xp FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
   if (!user) return res.status(404).json({ erro: 'Usuário não encontrado' });
-  const isAdmin = db.prepare('SELECT 1 FROM admins_matriculas WHERE matricula = ?').get(req.usuario.matricula);
+  const isAdmin = await db.prepare('SELECT 1 FROM admins_matriculas WHERE matricula = ?').get(req.usuario.matricula);
   res.json({ ...user, isAdmin: !!isAdmin || user.isAdmin === 1 });
-});
+}));
 
-app.put('/api/usuario/xp', autenticar, (req, res) => {
-  const { xp } = req.body;
-  db.prepare('UPDATE usuarios SET xp = ? WHERE matricula = ?').run(xp, req.usuario.matricula);
+app.put('/api/usuario/xp', autenticar, handle(async (req, res) => {
+  const { xp, adicionar } = req.body;
+  if (adicionar) {
+    await db.prepare('UPDATE usuarios SET xp = COALESCE(xp, 0) + ? WHERE matricula = ?').run(adicionar, req.usuario.matricula);
+    const user = await db.prepare('SELECT xp FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
+    return res.json({ ok: true, xp: user.xp });
+  }
+  await db.prepare('UPDATE usuarios SET xp = ? WHERE matricula = ?').run(xp || 0, req.usuario.matricula);
   res.json({ ok: true });
-});
+}));
 
 // ==================== LIVROS ====================
 
-app.get('/api/livros', (req, res) => {
-  const livros = db.prepare('SELECT * FROM livros').all();
+app.get('/api/livros', handle(async (req, res) => {
+  const livros = await db.prepare('SELECT * FROM livros').all();
   res.json(livros.map(l => ({ ...l, disponivel: !!l.disponivel })));
-});
+}));
 
-app.get('/api/livros/:id', autenticar, (req, res) => {
-  const livro = db.prepare('SELECT * FROM livros WHERE id = ?').get(req.params.id);
+app.get('/api/livros/:id', autenticar, handle(async (req, res) => {
+  const livro = await db.prepare('SELECT * FROM livros WHERE id = ?').get(req.params.id);
   if (!livro) return res.status(404).json({ erro: 'Livro não encontrado' });
-  const resenhas = db.prepare('SELECT * FROM resenhas WHERE idLivro = ? ORDER BY data DESC').all(livro.id);
-  const resenhasComCurtidas = resenhas.map(r => {
-    const curtidas = db.prepare('SELECT COUNT(*) as total FROM curtidas_resenhas WHERE idResenha = ?').get(r.id);
-    const jaCurtiu = db.prepare('SELECT 1 FROM curtidas_resenhas WHERE idResenha = ? AND matricula = ?').get(r.id, req.usuario.matricula);
-    return { ...r, curtidas: curtidas.total, jaCurtiu: !!jaCurtiu };
-  });
+  const resenhas = await db.prepare('SELECT * FROM resenhas WHERE id_livro = ? ORDER BY data DESC').all(livro.id);
+  const resenhasComCurtidas = [];
+  for (const r of resenhas) {
+    const curtidas = await db.prepare('SELECT COUNT(*) as total FROM curtidas_resenhas WHERE id_resenha = ?').get(r.id);
+    const jaCurtiu = await db.prepare('SELECT 1 FROM curtidas_resenhas WHERE id_resenha = ? AND matricula = ?').get(r.id, req.usuario.matricula);
+    resenhasComCurtidas.push({ ...r, curtidas: curtidas.total, jaCurtiu: !!jaCurtiu });
+  }
   res.json({ ...livro, disponivel: !!livro.disponivel, resenhas: resenhasComCurtidas });
-});
+}));
 
-app.post('/api/livros', autenticar, adminOnly, (req, res) => {
+app.post('/api/livros', autenticar, adminOnly, handle(async (req, res) => {
   const { titulo, autor, categoria, formato, paginas, ano, sinopse, previa } = req.body;
   if (!titulo) return res.status(400).json({ erro: 'Título obrigatório' });
   const id = Date.now();
-  db.prepare(`INSERT INTO livros (id, titulo, autor, categoria, formato, paginas, ano, sinopse, previa, disponivel)
+  await db.prepare(`INSERT INTO livros (id, titulo, autor, categoria, formato, paginas, ano, sinopse, previa, disponivel)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`).run(id, titulo, autor || '', categoria || 'Geral', formato || 'Fisico', paginas || 0, ano || '', sinopse || '', previa || '');
   res.json({ id, ok: true });
-});
+}));
 
-app.delete('/api/livros/:id', autenticar, adminOnly, (req, res) => {
-  db.prepare('DELETE FROM livros WHERE id = ?').run(req.params.id);
+app.delete('/api/livros/:id', autenticar, adminOnly, handle(async (req, res) => {
+  await db.prepare('DELETE FROM livros WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
-});
+}));
+
+app.put('/api/livros/:id/status', autenticar, adminOnly, handle(async (req, res) => {
+  const livro = await db.prepare('SELECT disponivel FROM livros WHERE id = ?').get(req.params.id);
+  if (!livro) return res.status(404).json({ erro: 'Livro não encontrado' });
+  const novo = livro.disponivel ? 0 : 1;
+  await db.prepare('UPDATE livros SET disponivel = ? WHERE id = ?').run(novo, req.params.id);
+  res.json({ ok: true, disponivel: !!novo });
+}));
 
 // ==================== EMPRESTIMOS LIVROS ====================
 
-app.get('/api/emprestimos/ativos', autenticar, (req, res) => {
-  const emprestimos = db.prepare(`
+app.get('/api/emprestimos/ativos', autenticar, handle(async (req, res) => {
+  const emprestimos = await db.prepare(`
     SELECT e.*, l.titulo, l.formato, l.capa
     FROM emprestimos_livros e
-    JOIN livros l ON e.idLivro = l.id
+    JOIN livros l ON e.id_livro = l.id
     WHERE e.matricula = ? AND e.status = 'ativo'
-    ORDER BY e.dataEmprestimo DESC
+    ORDER BY e.data_emprestimo DESC
   `).all(req.usuario.matricula);
   res.json(emprestimos);
-});
+}));
 
-app.post('/api/emprestimos', autenticar, (req, res) => {
+app.post('/api/emprestimos', autenticar, handle(async (req, res) => {
   const { idLivro } = req.body;
-  const livro = db.prepare('SELECT * FROM livros WHERE id = ?').get(idLivro);
+  const livro = await db.prepare('SELECT * FROM livros WHERE id = ?').get(idLivro);
   if (!livro) return res.status(404).json({ erro: 'Livro não encontrado' });
   if (!livro.disponivel) return res.status(400).json({ erro: 'Livro não disponível' });
 
-  const emprestimoAtivo = db.prepare('SELECT 1 FROM emprestimos_livros WHERE idLivro = ? AND matricula = ? AND status = ?').get(idLivro, req.usuario.matricula, 'ativo');
+  const emprestimoAtivo = await db.prepare('SELECT 1 FROM emprestimos_livros WHERE id_livro = ? AND matricula = ? AND status = ?').get(idLivro, req.usuario.matricula, 'ativo');
   if (emprestimoAtivo) return res.status(400).json({ erro: 'Você já possui este livro emprestado' });
 
   const dataEmprestimo = new Date();
   const dataDevolucao = new Date(dataEmprestimo);
   dataDevolucao.setDate(dataDevolucao.getDate() + 7);
 
-  db.prepare('INSERT INTO emprestimos_livros (idLivro, matricula, dataEmprestimo, dataDevolucao) VALUES (?, ?, ?, ?)').run(
+  const result = await db.prepare('INSERT INTO emprestimos_livros (id_livro, matricula, data_emprestimo, data_devolucao) VALUES (?, ?, ?, ?) RETURNING id').run(
     idLivro, req.usuario.matricula, dataEmprestimo.toISOString(), dataDevolucao.toISOString()
   );
-  db.prepare('UPDATE livros SET disponivel = 0 WHERE id = ?').run(idLivro);
+  await db.prepare('UPDATE livros SET disponivel = 0 WHERE id = ?').run(idLivro);
 
-  res.json({ ok: true, dataDevolucao: dataDevolucao.toISOString() });
-});
+  res.json({ ok: true, idEmprestimo: result.lastInsertRowid, dataDevolucao: dataDevolucao.toISOString() });
+}));
 
-app.post('/api/emprestimos/:id/prorrogar', autenticar, (req, res) => {
-  const emp = db.prepare('SELECT * FROM emprestimos_livros WHERE id = ? AND matricula = ? AND status = ?').get(req.params.id, req.usuario.matricula, 'ativo');
+app.post('/api/emprestimos/:id/prorrogar', autenticar, handle(async (req, res) => {
+  const emp = await db.prepare('SELECT * FROM emprestimos_livros WHERE id = ? AND matricula = ? AND status = ?').get(req.params.id, req.usuario.matricula, 'ativo');
   if (!emp) return res.status(404).json({ erro: 'Empréstimo não encontrado' });
   if (emp.prorrogas >= 2) return res.status(400).json({ erro: 'Limite de 2 renovações atingido' });
 
   const novaData = new Date(emp.dataDevolucao);
   novaData.setDate(novaData.getDate() + 7);
 
-  db.prepare('UPDATE emprestimos_livros SET dataDevolucao = ?, prorrogas = prorrogas + 1 WHERE id = ?').run(novaData.toISOString(), emp.id);
+  await db.prepare('UPDATE emprestimos_livros SET data_devolucao = ?, prorrogas = prorrogas + 1 WHERE id = ?').run(novaData.toISOString(), emp.id);
   res.json({ ok: true, novaData: novaData.toISOString(), prorrogas: emp.prorrogas + 1 });
-});
+}));
 
-app.post('/api/emprestimos/:id/devolver', autenticar, (req, res) => {
-  const emp = db.prepare('SELECT * FROM emprestimos_livros WHERE id = ? AND status = ?').get(req.params.id, 'ativo');
+app.post('/api/emprestimos/:id/devolver', autenticar, handle(async (req, res) => {
+  const emp = await db.prepare('SELECT * FROM emprestimos_livros WHERE id = ? AND status = ?').get(req.params.id, 'ativo');
   if (!emp) return res.status(404).json({ erro: 'Empréstimo não encontrado' });
 
-  db.prepare('UPDATE emprestimos_livros SET status = ? WHERE id = ?').run('devolvido', emp.id);
-  db.prepare('UPDATE livros SET disponivel = 1 WHERE id = ?').run(emp.idLivro);
+  await db.prepare('UPDATE emprestimos_livros SET status = ? WHERE id = ?').run('devolvido', emp.id);
+  await db.prepare('UPDATE livros SET disponivel = 1 WHERE id = ?').run(emp.idLivro);
   res.json({ ok: true });
-});
+}));
 
 // ==================== RESERVAS PCs ====================
 
-app.get('/api/reservas/pcs', autenticar, (req, res) => {
-  const reservas = db.prepare('SELECT * FROM reservas_pcs ORDER BY data DESC, horaInicio DESC').all();
+app.get('/api/reservas/pcs', autenticar, handle(async (req, res) => {
+  const reservas = await db.prepare(`
+    SELECT r.id, r.id_pc, r.nome_pc, r.local, r.matricula,
+      to_char(r.data, 'YYYY-MM-DD') AS data,
+      to_char(r.hora_inicio, 'HH24:MI') AS hora_inicio,
+      to_char(r.hora_fim, 'HH24:MI') AS hora_fim,
+      u.nome AS nome_aluno
+    FROM reservas_pcs r
+    LEFT JOIN usuarios u ON r.matricula = u.matricula
+    ORDER BY r.data DESC, r.hora_inicio DESC
+  `).all();
   res.json(reservas);
-});
+}));
 
-app.get('/api/reservas/pcs/minhas', autenticar, (req, res) => {
-  const reservas = db.prepare('SELECT * FROM reservas_pcs WHERE matricula = ? ORDER BY data DESC, horaInicio DESC').all(req.usuario.matricula);
+app.get('/api/reservas/pcs/minhas', autenticar, handle(async (req, res) => {
+  const reservas = await db.prepare(`
+    SELECT id, id_pc, nome_pc, local, matricula,
+      to_char(data, 'YYYY-MM-DD') AS data,
+      to_char(hora_inicio, 'HH24:MI') AS hora_inicio,
+      to_char(hora_fim, 'HH24:MI') AS hora_fim
+    FROM reservas_pcs WHERE matricula = ? ORDER BY data DESC, hora_inicio DESC
+  `).all(req.usuario.matricula);
   res.json(reservas);
-});
+}));
 
-app.post('/api/reservas/pcs', autenticar, (req, res) => {
+app.post('/api/reservas/pcs', autenticar, handle(async (req, res) => {
   const { idPc, nomePc, local, data, horaInicio, horaFim } = req.body;
   if (!idPc || !data || !horaInicio || !horaFim) return res.status(400).json({ erro: 'Dados incompletos' });
 
-  const conflito = db.prepare(`
-    SELECT 1 FROM reservas_pcs WHERE idPc = ? AND data = ?
-    AND ((horaInicio < ? AND horaFim > ?) OR (horaInicio < ? AND horaFim > ?) OR (horaInicio >= ? AND horaFim <= ?))
+  const conflito = await db.prepare(`
+    SELECT 1 FROM reservas_pcs WHERE id_pc = ? AND data = ?
+    AND ((hora_inicio < ? AND hora_fim > ?) OR (hora_inicio < ? AND hora_fim > ?) OR (hora_inicio >= ? AND hora_fim <= ?))
   `).get(idPc, data, horaFim, horaFim, horaInicio, horaInicio, horaInicio, horaFim);
   if (conflito) return res.status(400).json({ erro: 'Horário já reservado para este PC' });
 
   const hoje = new Date().toISOString().split('T')[0];
   if (data < hoje) return res.status(400).json({ erro: 'Não é possível reservar para datas passadas' });
 
-  db.prepare('INSERT INTO reservas_pcs (idPc, nomePc, local, matricula, data, horaInicio, horaFim) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+  await db.prepare('INSERT INTO reservas_pcs (id_pc, nome_pc, local, matricula, data, hora_inicio, hora_fim) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
     idPc, nomePc || `PC-${String(idPc).padStart(2, '0')}`, local || 'Biblioteca', req.usuario.matricula, data, horaInicio, horaFim
   );
   res.json({ ok: true });
-});
+}));
 
-app.delete('/api/reservas/pcs/:id', autenticar, (req, res) => {
-  const reserva = db.prepare('SELECT * FROM reservas_pcs WHERE id = ?').get(req.params.id);
+app.delete('/api/reservas/pcs/:id', autenticar, handle(async (req, res) => {
+  const reserva = await db.prepare('SELECT * FROM reservas_pcs WHERE id = ?').get(req.params.id);
   if (!reserva) return res.status(404).json({ erro: 'Reserva não encontrada' });
   if (reserva.matricula !== req.usuario.matricula && !req.usuario.isAdmin) return res.status(403).json({ erro: 'Acesso negado' });
-  db.prepare('DELETE FROM reservas_pcs WHERE id = ?').run(req.params.id);
+  await db.prepare('DELETE FROM reservas_pcs WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
-});
+}));
 
 // ==================== ITENS BIBLIOTECA ====================
 
-app.get('/api/itens', (req, res) => {
-  const itens = db.prepare('SELECT * FROM itens_biblioteca').all();
+app.get('/api/itens', handle(async (req, res) => {
+  const itens = await db.prepare('SELECT * FROM itens_biblioteca').all();
   res.json(itens);
-});
+}));
 
-app.get('/api/itens/emprestimos', autenticar, (req, res) => {
-  const emprestimos = db.prepare('SELECT * FROM emprestimos_itens WHERE matricula = ? AND status = ?').all(req.usuario.matricula, 'ativo');
+app.get('/api/itens/emprestimos', autenticar, handle(async (req, res) => {
+  const emprestimos = await db.prepare('SELECT * FROM emprestimos_itens WHERE matricula = ? AND status = ?').all(req.usuario.matricula, 'ativo');
   res.json(emprestimos);
-});
+}));
 
-app.get('/api/itens/emprestimos/todos', autenticar, adminOnly, (req, res) => {
-  const emprestimos = db.prepare('SELECT * FROM emprestimos_itens WHERE status = ? ORDER BY dataEmprestimo DESC').all('ativo');
+app.get('/api/itens/emprestimos/todos', autenticar, adminOnly, handle(async (req, res) => {
+  const emprestimos = await db.prepare('SELECT * FROM emprestimos_itens WHERE status = ? ORDER BY data_emprestimo DESC').all('ativo');
   res.json(emprestimos);
-});
+}));
 
-app.post('/api/itens/emprestar', autenticar, (req, res) => {
+app.post('/api/itens/emprestar', autenticar, handle(async (req, res) => {
   const { idItem } = req.body;
-  const item = db.prepare('SELECT * FROM itens_biblioteca WHERE id = ?').get(idItem);
+  const item = await db.prepare('SELECT * FROM itens_biblioteca WHERE id = ?').get(idItem);
   if (!item) return res.status(404).json({ erro: 'Item não encontrado' });
   if (item.qtdDisponivel <= 0) return res.status(400).json({ erro: 'Item indisponível' });
 
-  const emprestimoAtivo = db.prepare('SELECT 1 FROM emprestimos_itens WHERE idItem = ? AND matricula = ? AND status = ?').get(idItem, req.usuario.matricula, 'ativo');
+  const emprestimoAtivo = await db.prepare('SELECT 1 FROM emprestimos_itens WHERE id_item = ? AND matricula = ? AND status = ?').get(idItem, req.usuario.matricula, 'ativo');
   if (emprestimoAtivo) return res.status(400).json({ erro: 'Você já possui este item emprestado' });
 
-  const countItens = db.prepare('SELECT COUNT(*) as total FROM emprestimos_itens WHERE matricula = ? AND status = ?').get(req.usuario.matricula, 'ativo');
+  const countItens = await db.prepare('SELECT COUNT(*) as total FROM emprestimos_itens WHERE matricula = ? AND status = ?').get(req.usuario.matricula, 'ativo');
   if (countItens.total >= 2) return res.status(400).json({ erro: 'Limite de 2 itens atingido' });
 
   const agora = new Date();
   const devolucao = new Date(agora.getTime() + 4 * 60 * 60 * 1000);
-  const user = db.prepare('SELECT nome FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
+  const user = await db.prepare('SELECT nome FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
 
-  db.prepare('INSERT INTO emprestimos_itens (idItem, nomeItem, categoria, icone, matricula, nomeAluno, dataEmprestimo, dataDevolucao) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+  await db.prepare('INSERT INTO emprestimos_itens (id_item, nome_item, categoria, icone, matricula, nome_aluno, data_emprestimo, data_devolucao) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
     item.id, item.nome, item.categoria, item.icone, req.usuario.matricula, user?.nome || '', agora.toISOString(), devolucao.toISOString()
   );
-  db.prepare('UPDATE itens_biblioteca SET qtdDisponivel = qtdDisponivel - 1 WHERE id = ?').run(item.id);
+  await db.prepare('UPDATE itens_biblioteca SET qtd_disponivel = qtd_disponivel - 1 WHERE id = ?').run(item.id);
   res.json({ ok: true });
-});
+}));
 
-app.post('/api/itens/devolver/:id', autenticar, adminOnly, (req, res) => {
-  const emp = db.prepare('SELECT * FROM emprestimos_itens WHERE id = ? AND status = ?').get(req.params.id, 'ativo');
+app.post('/api/itens/devolver/:id', autenticar, adminOnly, handle(async (req, res) => {
+  const emp = await db.prepare('SELECT * FROM emprestimos_itens WHERE id = ? AND status = ?').get(req.params.id, 'ativo');
   if (!emp) return res.status(404).json({ erro: 'Empréstimo não encontrado' });
 
-  db.prepare('UPDATE emprestimos_itens SET status = ? WHERE id = ?').run('devolvido', emp.id);
-  db.prepare('UPDATE itens_biblioteca SET qtdDisponivel = qtdDisponivel + 1 WHERE id = ?').run(emp.idItem);
+  await db.prepare('UPDATE emprestimos_itens SET status = ? WHERE id = ?').run('devolvido', emp.id);
+  await db.prepare('UPDATE itens_biblioteca SET qtd_disponivel = qtd_disponivel + 1 WHERE id = ?').run(emp.idItem);
   res.json({ ok: true });
-});
+}));
 
 // ==================== RESENHAS ====================
 
-app.post('/api/resenhas', autenticar, (req, res) => {
+app.post('/api/resenhas', autenticar, handle(async (req, res) => {
   const { idLivro, texto } = req.body;
   if (!texto || texto.length < 10) return res.status(400).json({ erro: 'Texto deve ter pelo menos 10 caracteres' });
   if (texto.length > 3000) return res.status(400).json({ erro: 'Texto deve ter no máximo 3000 caracteres' });
 
-  const livro = db.prepare('SELECT * FROM livros WHERE id = ?').get(idLivro);
-  const user = db.prepare('SELECT nome FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
+  const livro = await db.prepare('SELECT * FROM livros WHERE id = ?').get(idLivro);
+  const user = await db.prepare('SELECT nome FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
 
-  db.prepare('INSERT INTO resenhas (idLivro, tituloLivro, autorLivro, matricula, nomeAluno, texto) VALUES (?, ?, ?, ?, ?, ?)').run(
+  await db.prepare('INSERT INTO resenhas (id_livro, titulo_livro, autor_livro, matricula, nome_aluno, texto) VALUES (?, ?, ?, ?, ?, ?)').run(
     idLivro, livro?.titulo || 'Livro', livro?.autor || '', req.usuario.matricula, user?.nome || '', texto
   );
   res.json({ ok: true, xp: 300 });
-});
+}));
 
-app.post('/api/resenhas/:id/curtir', autenticar, (req, res) => {
-  const existente = db.prepare('SELECT 1 FROM curtidas_resenhas WHERE idResenha = ? AND matricula = ?').get(req.params.id, req.usuario.matricula);
+app.post('/api/resenhas/:id/curtir', autenticar, handle(async (req, res) => {
+  const existente = await db.prepare('SELECT 1 FROM curtidas_resenhas WHERE id_resenha = ? AND matricula = ?').get(req.params.id, req.usuario.matricula);
   if (existente) {
-    db.prepare('DELETE FROM curtidas_resenhas WHERE idResenha = ? AND matricula = ?').run(req.params.id, req.usuario.matricula);
+    await db.prepare('DELETE FROM curtidas_resenhas WHERE id_resenha = ? AND matricula = ?').run(req.params.id, req.usuario.matricula);
     res.json({ ok: true, curtido: false });
   } else {
-    db.prepare('INSERT INTO curtidas_resenhas (idResenha, matricula) VALUES (?, ?)').run(req.params.id, req.usuario.matricula);
+    await db.prepare('INSERT INTO curtidas_resenhas (id_resenha, matricula) VALUES (?, ?)').run(req.params.id, req.usuario.matricula);
     res.json({ ok: true, curtido: true, xp: 10 });
   }
-});
+}));
 
 // ==================== ACHADOS E PERDIDOS ====================
 
-app.get('/api/achados', (req, res) => {
-  const itens = db.prepare('SELECT * FROM achados_perdidos ORDER BY data DESC').all();
+app.get('/api/achados', handle(async (req, res) => {
+  const itens = await db.prepare(`
+    SELECT id, nome, local, to_char(data, 'YYYY-MM-DD') AS data, categoria, descricao, status
+    FROM achados_perdidos ORDER BY data DESC
+  `).all();
   res.json(itens);
-});
+}));
 
-app.post('/api/achados', autenticar, adminOnly, (req, res) => {
+app.post('/api/achados', autenticar, adminOnly, handle(async (req, res) => {
   const { nome, local, data, categoria, descricao } = req.body;
   if (!nome || !local || !data) return res.status(400).json({ erro: 'Nome, local e data obrigatórios' });
 
-  db.prepare('INSERT INTO achados_perdidos (nome, local, data, categoria, descricao) VALUES (?, ?, ?, ?, ?)').run(
+  await db.prepare('INSERT INTO achados_perdidos (nome, local, data, categoria, descricao) VALUES (?, ?, ?, ?, ?)').run(
     nome, local, data, categoria || 'Outro', descricao || ''
   );
   res.json({ ok: true });
-});
+}));
 
-app.put('/api/achados/:id/devolver', autenticar, adminOnly, (req, res) => {
-  db.prepare('UPDATE achados_perdidos SET status = ? WHERE id = ?').run('devolvido', req.params.id);
+app.put('/api/achados/:id/devolver', autenticar, adminOnly, handle(async (req, res) => {
+  await db.prepare('UPDATE achados_perdidos SET status = ? WHERE id = ?').run('devolvido', req.params.id);
   res.json({ ok: true });
-});
+}));
 
-app.delete('/api/achados/:id', autenticar, adminOnly, (req, res) => {
-  db.prepare('DELETE FROM achados_perdidos WHERE id = ?').run(req.params.id);
+app.delete('/api/achados/:id', autenticar, adminOnly, handle(async (req, res) => {
+  await db.prepare('DELETE FROM achados_perdidos WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
-});
+}));
 
 // ==================== DESAFIOS ====================
 
-app.get('/api/desafios', autenticar, (req, res) => {
-  const desafios = db.prepare('SELECT * FROM desafios').all();
-  const quizzesRespondidos = db.prepare('SELECT idDesafio, acertou FROM quizzes_respondidos WHERE matricula = ?').all(req.usuario.matricula);
+app.get('/api/desafios', autenticar, handle(async (req, res) => {
+  const desafios = await db.prepare('SELECT * FROM desafios').all();
+  const quizzesRespondidos = await db.prepare('SELECT id_desafio, acertou FROM quizzes_respondidos WHERE matricula = ?').all(req.usuario.matricula);
   const respondidos = {};
   quizzesRespondidos.forEach(q => { respondidos[q.idDesafio] = q.acertou === 1; });
   res.json({ desafios, quizzesRespondidos: respondidos });
-});
+}));
 
-app.post('/api/desafios', autenticar, adminOnly, (req, res) => {
+app.post('/api/desafios', autenticar, adminOnly, handle(async (req, res) => {
   const { titulo, xp, prazo, tipo, frase, opcoes, respostaCorreta } = req.body;
   if (!titulo) return res.status(400).json({ erro: 'Título obrigatório' });
   const id = Date.now();
-  db.prepare('INSERT INTO desafios (id, titulo, tipo, frase, opcoes, respostaCorreta, xp, prazo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+  await db.prepare('INSERT INTO desafios (id, titulo, tipo, frase, opcoes, resposta_correta, xp, prazo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
     id, titulo, tipo || 'atividade', frase || '', JSON.stringify(opcoes || []), respostaCorreta || 0, xp || 100, prazo || 'Semanal'
   );
-  res.json({ ok: true });
-});
+  res.json({
+    ok: true,
+    desafio: {
+      id, titulo, tipo: tipo || 'atividade', frase: frase || '',
+      opcoes: JSON.parse(JSON.stringify(opcoes || [])),
+      respostaCorreta: respostaCorreta || 0,
+      xp: xp || 100,
+      prazo: prazo || 'Semanal'
+    }
+  });
+}));
 
-app.post('/api/desafios/:id/responder', autenticar, (req, res) => {
+app.delete('/api/desafios/:id', autenticar, adminOnly, handle(async (req, res) => {
+  await db.prepare('DELETE FROM desafios WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+}));
+
+app.post('/api/desafios/:id/responder', autenticar, handle(async (req, res) => {
   const { respostaIndex } = req.body;
-  const desafio = db.prepare('SELECT * FROM desafios WHERE id = ?').get(req.params.id);
+  const desafio = await db.prepare('SELECT * FROM desafios WHERE id = ?').get(req.params.id);
   if (!desafio) return res.status(404).json({ erro: 'Desafio não encontrado' });
 
-  const existente = db.prepare('SELECT 1 FROM quizzes_respondidos WHERE matricula = ? AND idDesafio = ?').get(req.usuario.matricula, desafio.id);
+  const existente = await db.prepare('SELECT 1 FROM quizzes_respondidos WHERE matricula = ? AND id_desafio = ?').get(req.usuario.matricula, desafio.id);
   if (existente) return res.status(400).json({ erro: 'Você já respondeu este desafio' });
 
   const acertou = respostaIndex === desafio.respostaCorreta ? 1 : 0;
-  db.prepare('INSERT INTO quizzes_respondidos (matricula, idDesafio, acertou) VALUES (?, ?, ?)').run(req.usuario.matricula, desafio.id, acertou);
-
-  if (acertou) {
-    const user = db.prepare('SELECT xp FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
-    const novoXp = (user?.xp || 0) + desafio.xp;
-    db.prepare('UPDATE usuarios SET xp = ? WHERE matricula = ?').run(novoXp, req.usuario.matricula);
-  }
+  await db.prepare('INSERT INTO quizzes_respondidos (matricula, id_desafio, acertou) VALUES (?, ?, ?)').run(req.usuario.matricula, desafio.id, acertou);
 
   res.json({ ok: true, acertou: !!acertou, xpGanho: acertou ? desafio.xp : 0 });
-});
+}));
 
 // ==================== MEDALHAS ====================
 
-app.get('/api/medalhas/progresso', autenticar, (req, res) => {
+app.get('/api/medalhas/progresso', autenticar, handle(async (req, res) => {
   const progresso = {};
-  const rows = db.prepare('SELECT chave, valor FROM progresso_aluno WHERE matricula = ?').all(req.usuario.matricula);
+  const rows = await db.prepare('SELECT chave, valor FROM progresso_aluno WHERE matricula = ?').all(req.usuario.matricula);
   rows.forEach(r => { progresso[r.chave] = r.valor; });
-  const medalhas = db.prepare('SELECT idMedalha FROM medalhas_desbloqueadas WHERE matricula = ?').all(req.usuario.matricula);
+  const medalhas = await db.prepare('SELECT id_medalha FROM medalhas_desbloqueadas WHERE matricula = ?').all(req.usuario.matricula);
   const desbloqueadas = medalhas.map(m => m.idMedalha);
   res.json({ progresso, desbloqueadas });
-});
+}));
 
-app.post('/api/medalhas/incrementar', autenticar, (req, res) => {
+app.post('/api/medalhas/incrementar', autenticar, handle(async (req, res) => {
   const { chave, valor } = req.body;
   const v = valor || 1;
-  const existente = db.prepare('SELECT valor FROM progresso_aluno WHERE matricula = ? AND chave = ?').get(req.usuario.matricula, chave);
+  const existente = await db.prepare('SELECT valor FROM progresso_aluno WHERE matricula = ? AND chave = ?').get(req.usuario.matricula, chave);
   if (existente) {
-    db.prepare('UPDATE progresso_aluno SET valor = valor + ? WHERE matricula = ? AND chave = ?').run(v, req.usuario.matricula, chave);
+    await db.prepare('UPDATE progresso_aluno SET valor = valor + ? WHERE matricula = ? AND chave = ?').run(v, req.usuario.matricula, chave);
   } else {
-    db.prepare('INSERT INTO progresso_aluno (matricula, chave, valor) VALUES (?, ?, ?)').run(req.usuario.matricula, chave, v);
+    await db.prepare('INSERT INTO progresso_aluno (matricula, chave, valor) VALUES (?, ?, ?)').run(req.usuario.matricula, chave, v);
   }
   res.json({ ok: true });
-});
+}));
 
-app.post('/api/medalhas/desbloquear', autenticar, (req, res) => {
+app.post('/api/medalhas/desbloquear', autenticar, handle(async (req, res) => {
   const { idMedalha, xp } = req.body;
-  const existente = db.prepare('SELECT 1 FROM medalhas_desbloqueadas WHERE matricula = ? AND idMedalha = ?').get(req.usuario.matricula, idMedalha);
+  const existente = await db.prepare('SELECT 1 FROM medalhas_desbloqueadas WHERE matricula = ? AND id_medalha = ?').get(req.usuario.matricula, idMedalha);
   if (!existente) {
-    db.prepare('INSERT INTO medalhas_desbloqueadas (matricula, idMedalha) VALUES (?, ?)').run(req.usuario.matricula, idMedalha);
-    if (xp) {
-      const user = db.prepare('SELECT xp FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
-      db.prepare('UPDATE usuarios SET xp = ? WHERE matricula = ?').run((user?.xp || 0) + xp, req.usuario.matricula);
-    }
+    await db.prepare('INSERT INTO medalhas_desbloqueadas (matricula, id_medalha) VALUES (?, ?)').run(req.usuario.matricula, idMedalha);
   }
   res.json({ ok: true });
-});
+}));
 
 // ==================== LEITURA DIGITAL ====================
 
-app.post('/api/leituras', autenticar, (req, res) => {
+app.post('/api/leituras', autenticar, handle(async (req, res) => {
   const { idLivro } = req.body;
-  const user = db.prepare('SELECT nome FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
-  db.prepare('INSERT INTO leituras_digital (idLivro, matricula, concluida) VALUES (?, ?, 0)').run(idLivro, req.usuario.matricula);
+  const user = await db.prepare('SELECT nome FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
+  await db.prepare('INSERT INTO leituras_digital (id_livro, matricula, concluida) VALUES (?, ?, 0)').run(idLivro, req.usuario.matricula);
   res.json({ ok: true });
-});
+}));
 
-app.post('/api/leituras/concluir', autenticar, (req, res) => {
+app.post('/api/leituras/concluir', autenticar, handle(async (req, res) => {
   const { idLivro } = req.body;
-  db.prepare('UPDATE leituras_digital SET concluida = 1 WHERE idLivro = ? AND matricula = ? AND concluida = 0').run(idLivro, req.usuario.matricula);
-  const user = db.prepare('SELECT xp FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
-  const novoXp = (user?.xp || 0) + 50;
-  db.prepare('UPDATE usuarios SET xp = ? WHERE matricula = ?').run(novoXp, req.usuario.matricula);
-  res.json({ ok: true, xp: 50 });
-});
+  const result = await db.prepare('UPDATE leituras_digital SET concluida = 1 WHERE id_livro = ? AND matricula = ? AND concluida = 0 RETURNING id').run(idLivro, req.usuario.matricula);
+  res.json({ ok: true, novo: result.changes > 0 });
+}));
 
 // ==================== ADMIN ====================
 
-app.get('/api/admin/stats', autenticar, adminOnly, (req, res) => {
-  const totalAlunos = db.prepare('SELECT COUNT(*) as total FROM usuarios').get().total;
-  const totalLivros = db.prepare('SELECT COUNT(*) as total FROM livros').get().total;
-  const emprestimosAtivos = db.prepare('SELECT COUNT(*) as total FROM emprestimos_livros WHERE status = ?').get('ativo').total;
-  const reservasAtivas = db.prepare('SELECT COUNT(*) as total FROM reservas_pcs').get().total;
-  const achadosPendentes = db.prepare("SELECT COUNT(*) as total FROM achados_perdidos WHERE status = 'pendente'").get().total;
-  const itensEmprestados = db.prepare("SELECT COUNT(*) as total FROM emprestimos_itens WHERE status = 'ativo'").get().total;
+app.get('/api/admin/stats', autenticar, adminOnly, handle(async (req, res) => {
+  const totalAlunos = (await db.prepare('SELECT COUNT(*) as total FROM usuarios').get()).total;
+  const totalLivros = (await db.prepare('SELECT COUNT(*) as total FROM livros').get()).total;
+  const emprestimosAtivos = (await db.prepare('SELECT COUNT(*) as total FROM emprestimos_livros WHERE status = ?').get('ativo')).total;
+  const reservasAtivas = (await db.prepare('SELECT COUNT(*) as total FROM reservas_pcs').get()).total;
+  const achadosPendentes = (await db.prepare("SELECT COUNT(*) as total FROM achados_perdidos WHERE status = 'pendente'").get()).total;
+  const itensEmprestados = (await db.prepare("SELECT COUNT(*) as total FROM emprestimos_itens WHERE status = 'ativo'").get()).total;
   res.json({ totalAlunos, totalLivros, emprestimosAtivos, reservasAtivas, achadosPendentes, itensEmprestados });
-});
+}));
 
-app.get('/api/admin/alunos', autenticar, adminOnly, (req, res) => {
-  const alunos = db.prepare('SELECT matricula, nome, avatar, xp FROM usuarios ORDER BY nome').all();
-  res.json(alunos);
-});
+app.get('/api/admin/alunos', autenticar, adminOnly, handle(async (req, res) => {
+  const alunos = await db.prepare(`
+    SELECT u.matricula, u.nome, u.avatar, u.xp, u.is_admin,
+      (SELECT 1 FROM admins_matriculas am WHERE am.matricula = u.matricula) AS admin_flag
+    FROM usuarios u ORDER BY u.nome
+  `).all();
+  res.json(alunos.map(a => ({ ...a, isAdmin: !!a.isAdmin || !!a.adminFlag })));
+}));
 
-app.post('/api/admin/alunos', autenticar, adminOnly, (req, res) => {
+app.post('/api/admin/alunos', autenticar, adminOnly, handle(async (req, res) => {
   const { nome, matricula, isAdmin } = req.body;
   if (!nome || !matricula) return res.status(400).json({ erro: 'Nome e matrícula obrigatórios' });
 
-  const existente = db.prepare('SELECT 1 FROM usuarios WHERE matricula = ?').get(matricula);
+  const existente = await db.prepare('SELECT 1 FROM usuarios WHERE matricula = ?').get(matricula);
   if (existente) return res.status(400).json({ erro: 'Matrícula já cadastrada' });
 
   const senha_hash = bcrypt.hashSync(matricula.substring(0, 6), 10);
-  db.prepare('INSERT INTO usuarios (matricula, nome, senha_hash, avatar, isAdmin) VALUES (?, ?, ?, ?, ?)').run(
+  await db.prepare('INSERT INTO usuarios (matricula, nome, senha_hash, avatar, is_admin) VALUES (?, ?, ?, ?, ?)').run(
     matricula, nome, senha_hash, nome.charAt(0).toUpperCase(), isAdmin ? 1 : 0
   );
   if (isAdmin) {
-    db.prepare('INSERT OR IGNORE INTO admins_matriculas (matricula) VALUES (?)').run(matricula);
+    await db.prepare('INSERT INTO admins_matriculas (matricula) VALUES (?) ON CONFLICT DO NOTHING').run(matricula);
   }
   res.json({ ok: true });
-});
+}));
 
-app.delete('/api/admin/alunos/:matricula', autenticar, adminOnly, (req, res) => {
-  db.prepare('DELETE FROM usuarios WHERE matricula = ?').run(req.params.matricula);
+app.delete('/api/admin/alunos/:matricula', autenticar, adminOnly, handle(async (req, res) => {
+  await db.prepare('DELETE FROM usuarios WHERE matricula = ?').run(req.params.matricula);
   res.json({ ok: true });
-});
+}));
 
-app.put('/api/admin/alunos/:matricula/toggle-admin', autenticar, adminOnly, (req, res) => {
-  const user = db.prepare('SELECT isAdmin FROM usuarios WHERE matricula = ?').get(req.params.matricula);
+app.put('/api/admin/alunos/:matricula/toggle-admin', autenticar, adminOnly, handle(async (req, res) => {
+  const user = await db.prepare('SELECT is_admin FROM usuarios WHERE matricula = ?').get(req.params.matricula);
   if (!user) return res.status(404).json({ erro: 'Usuário não encontrado' });
   const novoAdmin = user.isAdmin ? 0 : 1;
-  db.prepare('UPDATE usuarios SET isAdmin = ? WHERE matricula = ?').run(novoAdmin, req.params.matricula);
+  await db.prepare('UPDATE usuarios SET is_admin = ? WHERE matricula = ?').run(novoAdmin, req.params.matricula);
   if (novoAdmin) {
-    db.prepare('INSERT OR IGNORE INTO admins_matriculas (matricula) VALUES (?)').run(req.params.matricula);
+    await db.prepare('INSERT INTO admins_matriculas (matricula) VALUES (?) ON CONFLICT DO NOTHING').run(req.params.matricula);
   } else {
-    db.prepare('DELETE FROM admins_matriculas WHERE matricula = ?').run(req.params.matricula);
+    await db.prepare('DELETE FROM admins_matriculas WHERE matricula = ?').run(req.params.matricula);
   }
   res.json({ ok: true, isAdmin: !!novoAdmin });
-});
+}));
 
-app.get('/api/admin/ranking', autenticar, adminOnly, (req, res) => {
-  const ranking = db.prepare('SELECT nome, matricula, xp FROM usuarios ORDER BY xp DESC LIMIT 50').all();
+app.put('/api/admin/alunos/:matricula/xp', autenticar, adminOnly, handle(async (req, res) => {
+  const valor = parseInt(req.body.qtd, 10) || 0;
+  if (!valor) return res.status(400).json({ erro: 'Quantidade de XP inválida' });
+  const user = await db.prepare('SELECT 1 FROM usuarios WHERE matricula = ?').get(req.params.matricula);
+  if (!user) return res.status(404).json({ erro: 'Usuário não encontrado' });
+  await db.prepare('UPDATE usuarios SET xp = COALESCE(xp, 0) + ? WHERE matricula = ?').run(valor, req.params.matricula);
+  res.json({ ok: true, xp: valor });
+}));
+
+app.get('/api/admin/ranking', autenticar, adminOnly, handle(async (req, res) => {
+  const ranking = await db.prepare('SELECT nome, matricula, xp FROM usuarios ORDER BY xp DESC LIMIT 50').all();
   res.json(ranking);
-});
+}));
 
 // ==================== EXPORT ====================
 
-app.get('/api/admin/export/csv', autenticar, adminOnly, (req, res) => {
-  const alunos = db.prepare('SELECT matricula, nome, xp FROM usuarios ORDER BY nome').all();
+app.get('/api/admin/export/csv', autenticar, adminOnly, handle(async (req, res) => {
+  const alunos = await db.prepare('SELECT matricula, nome, xp FROM usuarios ORDER BY nome').all();
   let csv = 'Matrícula;Nome;XP\n';
   alunos.forEach(a => { csv += `${a.matricula};${a.nome};${a.xp || 0}\n`; });
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename=cedupconecta_alunos.csv');
   res.send('\uFEFF' + csv);
-});
+}));
 
 // ==================== START ====================
 

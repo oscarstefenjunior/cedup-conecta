@@ -367,6 +367,16 @@
         .card-admin { border-left: 5px solid var(--vermelho); }
 
         /* --- RODAPÉ --- */
+        #sistema-interno > footer {
+            margin-top: 40px;
+            padding: 18px 20px;
+            text-align: center;
+            background: linear-gradient(135deg, #1e1968 0%, #0d0a3d 100%);
+            color: rgba(255,255,255,0.85);
+            font-size: 0.82rem;
+            border-top: 4px solid #e31c23;
+        }
+        #sistema-interno > footer p { margin: 0; }
         /* --- ESTILOS DO ACERVO E BUSCA DA BIBLIOTECA --- */
         .biblioteca-header-card {
             background: linear-gradient(135deg, #1e1968 0%, #2b238f 100%);
@@ -1015,6 +1025,12 @@
             flex-wrap: wrap;
         }
         .reservas-info-box b { color: #ffc107; }
+        .card .reservas-info-box {
+            background: #f4f6f9;
+            border: 1px solid #e0e0e0;
+            color: #444;
+        }
+        .card .reservas-info-box b { color: #2b238f; }
         .grid-computadores {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -1239,7 +1255,7 @@
         .emp-item-dias-restantes { font-weight: 700; }
         .emp-item-dias-restantes.urgente { color: #e31c23; }
         .emp-item-dias-restantes.ok { color: #28a745; }
-        .btn-filtro {
+        #reservas-itens .btn-filtro {
             background: white;
             color: var(--azul-escuro);
             border: 1px solid #ccc;
@@ -1250,10 +1266,20 @@
             font-size: 0.82rem;
             transition: 0.2s;
         }
-        .btn-filtro:hover, .btn-filtro.ativo {
+        #reservas-itens .btn-filtro:hover, #reservas-itens .btn-filtro.ativo {
             background: var(--azul-escuro);
             color: white;
             border-color: var(--azul-escuro);
+        }
+        .biblioteca-header-card .btn-filtro {
+            background: rgba(255,255,255,0.15);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.3);
+        }
+        .biblioteca-header-card .btn-filtro:hover, .biblioteca-header-card .btn-filtro.ativo {
+            background: #ffcc00;
+            border-color: #ffcc00;
+            color: #0c326f;
         }
 
         /* --- ESTILOS ACHADOS E PERDIDOS --- */
@@ -2057,7 +2083,7 @@
                         <div>
                             <div class="card" style="position: sticky; top: 20px;">
                                 <h3>📋 Itens Emprestados</h3>
-                                <p style="font-size: 0.85rem; color: #666; margin-bottom: 12px;">${usuarioLogado?.isAdmin ? 'Todos os empréstimos ativos. Faça a baixa ao receber o item de volta.' : 'Seus itens emprestados. Devolução feita pelo admin.'}</p>
+                                <p style="font-size: 0.85rem; color: #666; margin-bottom: 12px;">Seus itens emprestados. A baixa (devolução) é realizada pelo administrador.</p>
                                 <div id="lista-emprestimos-usuario">
                                     <!-- Renderizado via JS -->
                                 </div>
@@ -2340,6 +2366,8 @@
 
             </section>
 
+        </main>
+
         <footer>
             <p>&copy; 2026 CedupConecta - CEDUP Hermann Hering. Todos os direitos reservados.</p>
         </footer>
@@ -2359,6 +2387,14 @@
         let usuarioLogado = null;
         let xpAtual = 0;
 
+        function esc(texto) {
+            return String(texto ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+        }
+
+        function normalizar(texto) {
+            return String(texto || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        }
+
         async function apiFetch(url, options = {}) {
             const headers = { 'Content-Type': 'application/json', ...options.headers };
             if (tokenSessao) headers['Authorization'] = `Bearer ${tokenSessao}`;
@@ -2372,7 +2408,9 @@
             xpAtual += qtd;
             const elScore = document.getElementById('perfil-score');
             if (elScore) elScore.textContent = xpAtual.toLocaleString('pt-BR') + ' XP';
-            if (tokenSessao) apiFetch('/api/usuario/xp', { method: 'PUT', body: JSON.stringify({ xp: xpAtual }) }).catch(() => {});
+            const elGamificacao = document.getElementById('gamificacao-xp');
+            if (elGamificacao) elGamificacao.textContent = xpAtual.toLocaleString('pt-BR') + ' XP';
+            if (tokenSessao) apiFetch('/api/usuario/xp', { method: 'PUT', body: JSON.stringify({ adicionar: qtd }) }).catch(() => {});
         }
 
         // --- Sistema de Login via API ---
@@ -2394,7 +2432,8 @@
                     nome: data.usuario.nome,
                     curso: data.usuario.curso,
                     matriculaFormatada: '#' + data.usuario.matricula,
-                    score: data.usuario.xp?.toLocaleString('pt-BR') + ' XP' || '0 XP',
+                    xp: data.usuario.xp || 0,
+                    score: (data.usuario.xp || 0).toLocaleString('pt-BR') + ' XP',
                     ranking: data.usuario.isAdmin ? 'Painel do Professor / Admin' : 'Estudante Cadastrado',
                     avatar: data.usuario.avatar,
                     isAdmin: data.usuario.isAdmin
@@ -2433,12 +2472,8 @@
             if (elNome) elNome.textContent = usuario.nome;
             if (elCurso) elCurso.textContent = usuario.curso;
             if (elMatricula) elMatricula.textContent = usuario.matriculaFormatada;
-            if (elScore) elScore.textContent = usuario.score;
+            if (elScore) elScore.textContent = xpAtual.toLocaleString('pt-BR') + ' XP';
             if (elPosicao) elPosicao.textContent = usuario.ranking;
-
-            if (!usuario.isAdmin) {
-                xpAtual = parseInt(usuario.score) || 0;
-            }
         }
 
         function fazerLogout() {
@@ -2466,16 +2501,18 @@
         }
 
         // --- Carregar dados da API após login ---
-        async function carregarDadosApi() {
+async function carregarDadosApi() {
             try {
-                const [livros, emprestimos, itens, itensEmprestados, achados, desafiosData, progressoData] = await Promise.all([
+                const urlItensEmprestados = usuarioLogado?.isAdmin ? '/api/itens/emprestimos/todos' : '/api/itens/emprestimos';
+                const [livros, emprestimos, itens, itensEmprestados, achados, desafiosData, progressoData, reservas] = await Promise.all([
                     apiFetch('/api/livros'),
                     apiFetch('/api/emprestimos/ativos'),
                     apiFetch('/api/itens'),
-                    apiFetch('/api/itens/emprestimos'),
+                    apiFetch(urlItensEmprestados),
                     apiFetch('/api/achados'),
                     apiFetch('/api/desafios'),
-                    apiFetch('/api/medalhas/progresso')
+                    apiFetch('/api/medalhas/progresso'),
+                    apiFetch('/api/reservas/pcs')
                 ]);
 
                 ACERVO_LIVROS.length = 0;
@@ -2519,6 +2556,13 @@
                 achadosPerdidos.length = 0;
                 achados.forEach(a => achadosPerdidos.push(a));
 
+                reservasComputadores = reservas.map(r => ({
+                    ...r,
+                    horaInicio: String(r.horaInicio || '').slice(0, 5),
+                    horaFim: String(r.horaFim || '').slice(0, 5),
+                    dataFormatada: String(r.data || '').split('-').reverse().join('/')
+                }));
+
                 DESAFIOS_SISTEMA.length = 0;
                 desafiosData.desafios.forEach(d => {
                     DESAFIOS_SISTEMA.push({
@@ -2543,9 +2587,14 @@
                 renderizarMedalhas();
                 renderizarMedalhasHome();
                 renderizarDicaLeituraSemana();
+                renderizarDesafiosAposLogin();
             } catch (e) {
                 console.error('Erro ao carregar dados:', e);
             }
+        }
+
+        function renderizarDesafiosAposLogin() {
+            adminRenderizarDesafios();
         }
 
         // --- Navegação entre Abas ---
@@ -2796,7 +2845,7 @@
                     livro.categoria.toLowerCase().includes(termo);
 
                 // Filtro por categoria clicada
-                const bateCategoria = (categoriaFiltroAtual === 'Todos') || (livro.categoria === categoriaFiltroAtual);
+                const bateCategoria = (categoriaFiltroAtual === 'Todos') || (normalizar(livro.categoria) === normalizar(categoriaFiltroAtual));
 
                 // Filtro por formato / status
                 let bateFormato = true;
@@ -2818,12 +2867,20 @@
             filtrarLivros();
         }
 
-        function abrirDetalhesLivro(idLivro) {
+        async function abrirDetalhesLivro(idLivro) {
             const livro = ACERVO_LIVROS.find(l => l.id === idLivro);
             if (!livro) return;
 
             const modal = document.getElementById('modal-detalhes-livro');
             if (!modal) return;
+
+            let resenhas = [];
+            if (tokenSessao) {
+                try {
+                    const detalhe = await apiFetch('/api/livros/' + idLivro);
+                    resenhas = detalhe.resenhas || [];
+                } catch (e) { resenhas = []; }
+            }
 
             const estaLocado = locacoesUsuario.some(l => l.idLivro === livro.id);
             const ehDigital = livro.formato && livro.formato.includes('Digital');
@@ -2890,20 +2947,20 @@
                         </div>
 
                         <div class="modal-livro-resenhas">
-                            <h4>📖 Resenhas dos Alunos (${resenhasLivros.filter(r => r.idLivro === livro.id).length})</h4>
-                            ${resenhasLivros.filter(r => r.idLivro === livro.id).length === 0
+                            <h4>📖 Resenhas dos Alunos (${resenhas.length})</h4>
+                            ${resenhas.length === 0
                                 ? `<div class="resenha-sem-resenhas">Nenhuma resenha ainda. Seja o primeiro a avaliar!</div>`
-                                : resenhasLivros.filter(r => r.idLivro === livro.id).map(resenha => {
-                                    const curtidas = curtidasResenhas.filter(c => c.idResenha === resenha.id).length;
-                                    const jaCurtiu = curtidasResenhas.some(c => c.idResenha === resenha.id && c.matricula === (usuarioLogado?.matriculaFormatada || '').replace('#', ''));
+                                : resenhas.map(resenha => {
+                                    const curtidas = resenha.curtidas || 0;
+                                    const jaCurtiu = !!resenha.jaCurtiu;
                                     const dataFormat = new Date(resenha.data).toLocaleDateString('pt-BR');
                                     return `
                                         <div class="resenha-card">
                                             <div class="resenha-header">
-                                                <span class="resenha-autor">👤 ${resenha.nomeAluno}</span>
+                                                <span class="resenha-autor">👤 ${esc(resenha.nomeAluno)}</span>
                                                 <span class="resenha-data">${dataFormat}</span>
                                             </div>
-                                            <div class="resenha-texto">${resenha.texto}</div>
+                                            <div class="resenha-texto">${esc(resenha.texto)}</div>
                                             <div class="resenha-actions">
                                                 <button class="btn-like-resenha ${jaCurtiu ? 'curtiu' : ''}" onclick="event.stopPropagation(); curtirResenha('${resenha.id}', this)">
                                                     👍 ${curtidas > 0 ? curtidas : ''}
@@ -2951,6 +3008,13 @@
 
         function concluirLeituraDigital() {
             if (!livroEmLeituraAtual) return;
+
+            const jaConcluida = locacoesUsuario.some(l => l.idLivro === livroEmLeituraAtual.id && l.tipo === 'digital');
+            if (jaConcluida) {
+                fecharLeitura();
+                return;
+            }
+
             adicionarXP(50);
             incrementarProgresso('leituras', 1);
             alert(`Parabéns! Você completou a leitura técnica de "${livroEmLeituraAtual.titulo}" e ganhou +50 XP no ranking do CEDUP!`);
@@ -2974,15 +3038,16 @@
             if (!livro) return;
 
             try {
-                await apiFetch('/api/emprestimos', { method: 'POST', body: JSON.stringify({ idLivro }) });
+                const dataResp = await apiFetch('/api/emprestimos', { method: 'POST', body: JSON.stringify({ idLivro }) });
 
-                const dataDev = new Date();
-                dataDev.setDate(dataDev.getDate() + 7);
+                const dataDev = dataResp.dataDevolucao ? new Date(dataResp.dataDevolucao) : new Date();
+                if (!dataResp.dataDevolucao) dataDev.setDate(dataDev.getDate() + 7);
                 const prazoFmt = `Devolução até ${dataDev.toLocaleDateString('pt-BR')}`;
 
                 livro.disponivel = false;
                 locacoesUsuario.unshift({
                     idLivro: livro.id,
+                    idEmprestimo: dataResp.idEmprestimo,
                     titulo: livro.titulo,
                     formato: livro.formato,
                     capa: livro.capa,
@@ -3322,6 +3387,18 @@
                     })
                 });
 
+                reservasComputadores.push({
+                    idPc: pc.id,
+                    nomePc: pc.nome,
+                    local: pc.local,
+                    matricula: (usuarioLogado?.matriculaFormatada || '').replace('#', ''),
+                    nomeAluno: usuarioLogado?.nome || 'Aluno',
+                    data: data,
+                    horaInicio: String(horaInicio).slice(0, 5),
+                    horaFim: String(horaFim).slice(0, 5),
+                    dataFormatada: data.split('-').reverse().join('/')
+                });
+
                 adicionarXP(25);
                 await incrementarProgresso('reservas_pc', 1);
                 const dataFormatada = new Date(data + 'T12:00:00').toLocaleDateString('pt-BR');
@@ -3343,6 +3420,7 @@
             if (!confirm('Deseja cancelar esta reserva agendada?')) return;
             try {
                 await apiFetch(`/api/reservas/pcs/${idReserva}`, { method: 'DELETE' });
+                reservasComputadores = reservasComputadores.filter(r => r.id !== idReserva);
                 alert('Reserva cancelada com sucesso.');
                 renderizarComputadores();
                 renderizarReservasUsuario();
@@ -3481,8 +3559,9 @@
         }
 
         function obterCategoriaClasse(categoria) {
-            if (categoria === 'Estudo') return 'tag-categoria-estudo';
-            if (categoria === 'Eletrônicos') return 'tag-categoria-eletronicos';
+            const cat = normalizar(categoria);
+            if (cat === 'estudo') return 'tag-categoria-estudo';
+            if (cat === 'eletronicos') return 'tag-categoria-eletronicos';
             return 'tag-categoria-livros';
         }
 
@@ -3541,7 +3620,7 @@
             if (categoria === 'Todos') {
                 renderizarItens();
             } else {
-                renderizarItens(ITENS_BIBLIOTECA.filter(i => i.categoria === categoria));
+                renderizarItens(ITENS_BIBLIOTECA.filter(i => normalizar(i.categoria) === normalizar(categoria)));
             }
         }
 
@@ -3762,12 +3841,12 @@
                             return `
                                 <tr>
                                     <td>
-                                        <strong>${item.nome}</strong>
-                                        ${item.descricao ? `<br><small style="color: #888;">${item.descricao}</small>` : ''}
+                                        <strong>${esc(item.nome)}</strong>
+                                        ${item.descricao ? `<br><small style="color: #888;">${esc(item.descricao)}</small>` : ''}
                                     </td>
-                                    <td>${item.local}</td>
+                                    <td>${esc(item.local)}</td>
                                     <td>${dataFormat}</td>
-                                    <td><span class="tag-categoria">${item.categoria}</span></td>
+                                    <td><span class="tag-categoria">${esc(item.categoria)}</span></td>
                                     <td>
                                         <span class="${item.status === 'pendente' ? 'tag-status-emp' : 'tag-status-disp'}">
                                             ${item.status === 'pendente' ? '⏳ Pendente' : '✓ Devolvido'}
@@ -3845,11 +3924,11 @@
                 return `
                     <div class="card-achado">
                         <div class="achado-item">
-                            <h4>${item.nome}</h4>
-                            <p>📍 <strong>Local:</strong> ${item.local}</p>
+                            <h4>${esc(item.nome)}</h4>
+                            <p>📍 <strong>Local:</strong> ${esc(item.local)}</p>
                             <p>📅 <strong>Data:</strong> ${dataFormat}</p>
-                            <p>📂 <strong>Categoria:</strong> <span class="tag-categoria">${item.categoria}</span></p>
-                            ${item.descricao ? `<p><strong>Obs:</strong> ${item.descricao}</p>` : ''}
+                            <p>📂 <strong>Categoria:</strong> <span class="tag-categoria">${esc(item.categoria)}</span></p>
+                            ${item.descricao ? `<p><strong>Obs:</strong> ${esc(item.descricao)}</p>` : ''}
                         </div>
                     </div>
                 `;
@@ -4004,12 +4083,17 @@
             }
         }
 
-        function adminAlternarStatusLivro(idLivro) {
+        async function adminAlternarStatusLivro(idLivro) {
             const livro = ACERVO_LIVROS.find(l => l.id === idLivro);
             if (!livro) return;
-            livro.disponivel = !livro.disponivel;
-            adminRenderizarTabelaLivros();
-            renderizarAcervo();
+            try {
+                const data = await apiFetch(`/api/livros/${idLivro}/status`, { method: 'PUT' });
+                livro.disponivel = data.disponivel;
+                adminRenderizarTabelaLivros();
+                renderizarAcervo();
+            } catch (e) {
+                alert('Erro ao alterar status do livro: ' + e.message);
+            }
         }
 
         async function adminExcluirLivro(idLivro) {
@@ -4067,7 +4151,7 @@
                             return `
                                 <tr>
                                     <td><strong>#${u.matricula}</strong></td>
-                                    <td>${u.nome}</td>
+                                    <td>${esc(u.nome)}</td>
                                     <td>
                                         <span class="${ehAdm ? 'badge-admin' : 'badge-aluno'}">
                                             ${ehAdm ? 'Professor / Admin' : 'Estudante'}
@@ -4122,20 +4206,11 @@
         }
 
         async function adminConcederXP(matricula, qtd) {
-            const usuario = listaAlunosCache.find(u => u.matricula === matricula);
+            const usuario = listaAlunosCache.find(u => u.matricula === matricula) || { nome: matricula };
             try {
-                // Buscar XP atual do aluno e somar
-                const alunos = await apiFetch('/api/admin/alunos');
-                const aluno = alunos.find(a => a.matricula === matricula);
-                const xpAluno = (aluno?.xp || 0) + qtd;
-                // Atualizar via endpoint genérico (usando token admin)
-                await apiFetch('/api/usuario/xp', { method: 'PUT', body: JSON.stringify({ xp: xpAluno }) });
-                if (usuarioLogado && usuarioLogado.matriculaFormatada === "#" + matricula) {
-                    adicionarXP(qtd);
-                }
-                alert(`⭐ +${qtd} XP concedidos com sucesso para o estudante ${usuario ? usuario.nome : matricula}!`);
-                listaAlunosCache = [];
-                adminRenderizarTabelaAlunos();
+                if (!confirm(`Conceder +${qtd} XP para ${usuario.nome} (matrícula #${matricula})?`)) return;
+                await apiFetch(`/api/admin/alunos/${matricula}/xp`, { method: 'PUT', body: JSON.stringify({ qtd }) });
+                alert(`⭐ +${qtd} XP concedidos com sucesso para ${usuario.nome}!`);
             } catch (e) {
                 alert('Erro ao conceder XP: ' + e.message);
             }
@@ -4182,8 +4257,8 @@
             const htmlAdmin = DESAFIOS_SISTEMA.map(desafio => `
                 <div class="item-lista">
                     <div>
-                        <strong>${desafio.tipo === 'quiz' ? '❓' : '⚡'} ${desafio.titulo}</strong>
-                        <p style="font-size: 0.85rem; color: #666;">+${desafio.xp} XP | ${desafio.prazo}${desafio.tipo === 'quiz' ? ' | Quiz interativo' : ''}</p>
+                        <strong>${desafio.tipo === 'quiz' ? '❓' : '⚡'} ${esc(desafio.titulo)}</strong>
+                        <p style="font-size: 0.85rem; color: #666;">+${desafio.xp} XP | ${esc(desafio.prazo)}${desafio.tipo === 'quiz' ? ' | Quiz interativo' : ''}</p>
                     </div>
                     <button class="btn-acao" style="background: var(--vermelho);" onclick="adminExcluirDesafio(${desafio.id})">Excluir Desafio</button>
                 </div>
@@ -4196,12 +4271,12 @@
                         <div class="quiz-card" id="quiz-${desafio.id}">
                             <span class="quiz-badge">❓ Quiz da Semana — +${desafio.xp} XP</span>
                             <p style="font-size: 0.85rem; color: #666; margin-bottom: 10px;">Quem é o autor desta frase?</p>
-                            <div class="quiz-frase">${desafio.frase}</div>
+                            <div class="quiz-frase">${esc(desafio.frase)}</div>
                             <div class="quiz-opcoes" id="quiz-opcoes-${desafio.id}">
                                 ${desafio.opcoes.map((opcao, i) => `
                                     <button class="quiz-opcao" onclick="responderQuiz(${desafio.id}, ${i})" id="quiz-btn-${desafio.id}-${i}">
                                         <span class="opcao-letra">${letras[i]}</span>
-                                        ${opcao}
+                                        ${esc(opcao)}
                                     </button>
                                 `).join('')}
                             </div>
@@ -4212,8 +4287,8 @@
                 return `
                     <div class="item-lista">
                         <div>
-                            <strong>⚡ ${desafio.titulo}</strong>
-                            <p style="font-size: 0.8rem; color: #666;">+${desafio.xp} XP | ${desafio.prazo}</p>
+                            <strong>⚡ ${esc(desafio.titulo)}</strong>
+                            <p style="font-size: 0.8rem; color: #666;">+${desafio.xp} XP | ${esc(desafio.prazo)}</p>
                         </div>
                         <button class="btn-acao" onclick="alert('Desafio aceito! Ao concluir sua atividade entregue ao professor para validar seus +${desafio.xp} XP.')">Aceitar</button>
                     </div>
@@ -4234,13 +4309,17 @@
             if (!titulo) return;
 
             try {
-                await apiFetch('/api/desafios', {
+                const data = await apiFetch('/api/desafios', {
                     method: 'POST',
                     body: JSON.stringify({ titulo, tipo: 'atividade', xp, prazo })
                 });
 
-                document.getElementById('admin-desafio-titulo').value = '';
+                if (data.desafio) {
+                    DESAFIOS_SISTEMA.push(data.desafio);
+                }
                 adminRenderizarDesafios();
+
+                document.getElementById('admin-desafio-titulo').value = '';
                 alert(`🚀 Desafio "${titulo}" lançado com sucesso para todos os alunos!`);
             } catch (e) {
                 alert('Erro ao criar desafio: ' + e.message);
@@ -4249,8 +4328,13 @@
 
         async function adminExcluirDesafio(idDesafio) {
             if (!confirm('Deseja realmente remover este desafio?')) return;
-            DESAFIOS_SISTEMA = DESAFIOS_SISTEMA.filter(d => d.id !== idDesafio);
-            adminRenderizarDesafios();
+            try {
+                await apiFetch(`/api/desafios/${idDesafio}`, { method: 'DELETE' });
+                DESAFIOS_SISTEMA = DESAFIOS_SISTEMA.filter(d => d.id !== idDesafio);
+                adminRenderizarDesafios();
+            } catch (e) {
+                alert('Erro ao excluir desafio: ' + e.message);
+            }
         }
 
         let quizzesRespondidos = {};
@@ -4561,7 +4645,7 @@
                     <div class="dica-leitura-meta">
                         <span>📚 ${livro.categoria}</span>
                         <span>📄 ${livro.paginas} páginas</span>
-                        <span>📅 ${livro.anoLancamento}</span>
+                        <span>📅 ${livro.anoLancamento || livro.ano || '—'}</span>
                         <span>📖 ${livro.edicao}</span>
                     </div>
                     <div class="dica-leitura-sinopse">${livro.sinopse}</div>
@@ -4573,7 +4657,17 @@
         // --- EXPORTAÇÃO EM CSV E RELATÓRIOS ---
         async function adminExportarCSV() {
             try {
-                window.location.href = '/api/admin/export/csv';
+                const res = await fetch('/api/admin/export/csv', { headers: { 'Authorization': `Bearer ${tokenSessao}` } });
+                if (!res.ok) throw new Error('Erro na exportação (HTTP ' + res.status + ')');
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'cedupconecta_alunos.csv';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
             } catch (e) {
                 alert('Erro ao exportar CSV: ' + e.message);
             }

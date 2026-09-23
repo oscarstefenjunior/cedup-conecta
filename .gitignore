@@ -3,3 +3,5 @@ node_modules/
 database.sqlite
 .vscode/
 npm-debug.log*
+.vercel
+.env*
