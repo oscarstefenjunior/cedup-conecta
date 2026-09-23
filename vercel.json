@@ -4,9 +4,25 @@
     {
       "src": "server.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "images.png",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "capas/*.jpg",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
+    {
+      "src": "/images\\.png",
+      "dest": "/images.png"
+    },
+    {
+      "src": "/capas/(.*\\.jpg)",
+      "dest": "/capas/$1"
+    },
     {
       "src": "/api/(.*)",
       "dest": "server.js"
