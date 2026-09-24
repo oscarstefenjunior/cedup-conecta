@@ -50,14 +50,19 @@ async function main() {
     cookie = login.headers.get('set-cookie').split(';')[0];
     const capa = 'data:image/png;base64,' + fs.readFileSync(path.join(root, 'images.png')).toString('base64');
     for (const [indice, imagem] of ['', capa].entries()) {
-      const response = await post('/api/livros', { titulo: 'Livro teste ' + indice, autor: 'Autor teste', categoria: 'Romance', sinopse: 'Teste', capa: imagem });
+      const detalhes = indice ? { editora: 'Editora teste', edicao: '2ª edição', isbn: '978-85-02-08920-4' } : {};
+      const response = await post('/api/livros', { titulo: 'Livro teste ' + indice, autor: 'Autor teste', categoria: 'Romance', sinopse: 'Teste', capa: imagem, ...detalhes });
       assert.equal(response.status, 200, await response.clone().text());
       const { id } = await response.json();
       assert.equal(id, 4 + indice);
       const livro = await db.prepare('SELECT * FROM livros WHERE id = ?').get(id);
       assert.equal(livro.capa, imagem);
       assert.equal(livro.categoria, 'Romance');
+      for (const campo of ['editora', 'edicao', 'isbn']) assert.equal(livro[campo], detalhes[campo] || '');
+      const publicado = await (await fetch(base + '/api/livros/' + id, { headers: { Cookie: cookie } })).json();
+      for (const campo of ['editora', 'edicao', 'isbn']) assert.equal(publicado[campo], detalhes[campo] || '');
     }
+    assert.equal((await post('/api/livros', { titulo: 'ISBN inválido', isbn: '123' })).status, 400);
     const invalida = await post('/api/livros', { titulo: 'Inválida', capa: 'data:image/svg+xml;base64,PHN2Zz4=' });
     assert.equal(invalida.status, 400);
     const grande = await post('/api/livros', { titulo: 'Grande', capa: 'data:image/png;base64,' + Buffer.alloc(2 * 1024 * 1024 + 1).toString('base64') });

@@ -2160,6 +2160,19 @@
                                     <input type="text" id="admin-livro-autor" placeholder="Ex: Thomas Cormen" required>
                                 </div>
                                 <div class="form-admin-grupo">
+                                    <label for="admin-livro-editora">Editora</label>
+                                    <input type="text" id="admin-livro-editora" placeholder="Ex: Editora Atlas" maxlength="200">
+                                </div>
+                                <div class="form-admin-grupo">
+                                    <label for="admin-livro-edicao">Edição</label>
+                                    <input type="text" id="admin-livro-edicao" placeholder="Ex: 2ª edição" maxlength="100">
+                                </div>
+                                <div class="form-admin-grupo">
+                                    <label for="admin-livro-isbn">ISBN</label>
+                                    <input type="text" id="admin-livro-isbn" placeholder="Ex: 978-85-02-08920-4" maxlength="32" aria-describedby="admin-livro-isbn-ajuda">
+                                    <small id="admin-livro-isbn-ajuda">Informe o ISBN de 10 ou 13 caracteres. Se o livro não tiver, deixe em branco.</small>
+                                </div>
+                                <div class="form-admin-grupo">
                                     <label for="admin-livro-categoria">Gênero</label>
                                     <select id="admin-livro-categoria">
                                         <option value="Romance">Romance</option>
@@ -4206,6 +4219,9 @@ async function carregarDadosApi() {
             e.preventDefault();
             const titulo = document.getElementById('admin-livro-titulo').value.trim();
             const autor = document.getElementById('admin-livro-autor').value.trim();
+            const editora = document.getElementById('admin-livro-editora').value.trim();
+            const edicao = document.getElementById('admin-livro-edicao').value.trim();
+            const isbn = document.getElementById('admin-livro-isbn').value.trim();
             const categoria = document.getElementById('admin-livro-categoria').value;
             const formato = document.getElementById('admin-livro-formato').value;
             const paginas = parseInt(document.getElementById('admin-livro-paginas').value) || 200;
@@ -4220,6 +4236,7 @@ async function carregarDadosApi() {
 
             const botao = e.currentTarget.querySelector('button[type="submit"]');
             if (botao.disabled) return;
+            if (!confirm(`Confirme os dados do livro antes de publicar:\n\nTítulo: ${titulo}\nAutor: ${autor}\nEditora: ${editora || 'Não informada'}\nEdição: ${edicao || 'Não informada'}\nISBN: ${isbn || 'Não informado'}\nGênero: ${categoria}\nFormato: ${formato}\nPáginas: ${paginas}\nAno: ${ano}\n\nSalvar e publicar?`)) return;
             botao.disabled = true;
             try {
                 const arquivo = document.getElementById('admin-livro-capa').files[0];
@@ -4231,16 +4248,19 @@ async function carregarDadosApi() {
                 }) : '';
                 const resultado = await apiFetch('/api/livros', {
                     method: 'POST',
-                    body: JSON.stringify({ titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa })
+                    body: JSON.stringify({ titulo, autor, editora, edicao, isbn, categoria, formato, paginas, ano, sinopse, previa, capa })
                 });
 
-                ACERVO_LIVROS.push({ id: resultado.id, titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa, disponivel: true });
+                ACERVO_LIVROS.push({ id: resultado.id, titulo, autor, editora, edicao, isbn, categoria, formato, paginas, ano, sinopse, previa, capa, disponivel: true });
                 adminRenderizarTabelaLivros();
                 renderizarAcervo();
                 adminAtualizarKPIs();
 
                 document.getElementById('admin-livro-titulo').value = '';
                 document.getElementById('admin-livro-autor').value = '';
+                document.getElementById('admin-livro-editora').value = '';
+                document.getElementById('admin-livro-edicao').value = '';
+                document.getElementById('admin-livro-isbn').value = '';
                 document.getElementById('admin-livro-sinopse').value = '';
                 document.getElementById('admin-livro-previa').value = '';
                 document.getElementById('admin-livro-paginas').value = '';

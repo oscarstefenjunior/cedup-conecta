@@ -46,17 +46,17 @@ function prepare(sql) {
   };
 }
 
-async function cadastrarLivro({ titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa }) {
+async function cadastrarLivro({ titulo, autor, editora, edicao, isbn, categoria, formato, paginas, ano, sinopse, previa, capa }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     // Serializa cadastros para não repetir IDs, mantendo o INTEGER e as referências existentes.
     await client.query('LOCK TABLE livros IN SHARE ROW EXCLUSIVE MODE');
     const result = await client.query(`
-      INSERT INTO livros (id, titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa, disponivel)
-      SELECT COALESCE(MAX(id), 0) + 1, $1, $2, $3, $4, $5, $6, $7, $8, $9, 1 FROM livros
+      INSERT INTO livros (id, titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa, editora, edicao, isbn, disponivel)
+      SELECT COALESCE(MAX(id), 0) + 1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1 FROM livros
       RETURNING id
-    `, [titulo, autor || '', categoria || 'Geral', formato || 'Fisico', paginas || 0, ano || '', sinopse || '', previa || '', capa || '']);
+    `, [titulo, autor || '', categoria || 'Geral', formato || 'Fisico', paginas || 0, ano || '', sinopse || '', previa || '', capa || '', editora || '', edicao || '', isbn || '']);
     await client.query('COMMIT');
     return result.rows[0].id;
   } catch (error) {

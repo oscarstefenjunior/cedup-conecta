@@ -92,12 +92,19 @@ app.get('/api/livros/:id', autenticar, handle(async (req, res) => {
 }));
 
 app.post('/api/livros', autenticar, adminOnly, handle(async (req, res) => {
-  const { titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa = '' } = req.body;
+  const { titulo, autor, editora = '', edicao = '', isbn = '', categoria, formato, paginas, ano, sinopse, previa, capa = '' } = req.body;
   if (!titulo) return res.status(400).json({ erro: 'Título obrigatório' });
+  if (typeof editora !== 'string' || editora.length > 200 || typeof edicao !== 'string' || edicao.length > 100 || typeof isbn !== 'string' || isbn.length > 32) {
+    return res.status(400).json({ erro: 'Confira os campos Editora, Edição e ISBN.' });
+  }
+  const isbnLimpo = isbn.replace(/[\s-]/g, '').toUpperCase();
+  if (isbnLimpo && !/^(\d{9}[\dX]|\d{13})$/.test(isbnLimpo)) {
+    return res.status(400).json({ erro: 'Informe um ISBN com 10 ou 13 caracteres, ou deixe em branco.' });
+  }
   if (typeof capa !== 'string' || (capa && (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(capa) || Buffer.from(capa.split(',')[1], 'base64').length > 2 * 1024 * 1024))) {
     return res.status(400).json({ erro: 'Envie uma capa JPG, PNG ou WebP de até 2 MB.' });
   }
-  const id = await db.cadastrarLivro({ titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa });
+  const id = await db.cadastrarLivro({ titulo, autor, editora: editora.trim(), edicao: edicao.trim(), isbn: isbn.trim(), categoria, formato, paginas, ano, sinopse, previa, capa });
   res.json({ id, ok: true });
 }));
 
