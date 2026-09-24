@@ -2145,11 +2145,15 @@
 
                 <!-- SUB-ABA 1: GESTÃO DA BIBLIOTECA -->
                 <div id="admin-biblioteca" class="admin-subsecao ativa">
-                    <div class="card" style="margin-bottom: 25px;">
-                        <h3>➕ Cadastrar Novo Livro no Acervo</h3>
+                    <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+                        <button type="button" class="btn-acao" onclick="adminAbrirCadastroLivro()">Cadastrar livro</button>
+                        <button type="button" class="btn-acao" onclick="adminMostrarEditorLivros(false)">Editar livros cadastrados</button>
+                    </div>
+                    <div id="admin-livro-editor" class="card" style="margin-bottom: 25px;">
+                        <h3 id="admin-livro-form-titulo">➕ Cadastrar Novo Livro no Acervo</h3>
                         <p style="font-size: 0.85rem; color: #666; margin-bottom: 20px;">Adicione livros físicos ou e-books digitais que ficarão visíveis para todos os estudantes na aba Biblioteca.</p>
                         
-                        <form onsubmit="adminCadastrarLivro(event)">
+                        <form id="admin-livro-form" onsubmit="adminCadastrarLivro(event)">
                             <div class="form-admin-grid">
                                 <div class="form-admin-grupo">
                                     <label for="admin-livro-titulo">Título da Obra *</label>
@@ -2231,11 +2235,12 @@
                                 <input type="text" id="admin-livro-previa" placeholder="Ex: Capítulo 1: Introdução aos conceitos fundamentais...">
                             </div>
 
-                            <button type="submit" class="btn-acao" style="padding: 10px 20px; font-size: 0.95rem;">➕ Salvar e Publicar Livro</button>
+                            <button id="admin-livro-salvar" type="submit" class="btn-acao" style="padding: 10px 20px; font-size: 0.95rem;">➕ Salvar e Publicar Livro</button>
+                            <button id="admin-livro-cancelar" type="button" class="btn-acao" hidden onclick="adminCancelarEdicaoLivro()">Cancelar edição</button>
                         </form>
                     </div>
 
-                    <div class="card">
+                    <div id="admin-livros-cadastrados" class="card" style="display: none;">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
                             <h3 style="margin-bottom: 0;">📚 Livros Cadastrados no Acervo do CEDUP</h3>
                             <span id="admin-contador-livros" style="font-size: 0.9rem; color: #666; font-weight: 600;">0 livros</span>
@@ -4174,6 +4179,7 @@ async function carregarDadosApi() {
                                     </span>
                                 </td>
                                 <td style="text-align: right;">
+                                    <button class="btn-acao" style="padding: 4px 8px; font-size: 0.75rem; margin-right: 4px;" onclick="adminEditarLivro(${livro.id})">Editar</button>
                                     <button class="btn-acao" style="background: #2b238f; padding: 4px 8px; font-size: 0.75rem; margin-right: 4px;" onclick="adminAlternarStatusLivro(${livro.id})">
                                         ${livro.disponivel ? 'Marcar Emprestado' : 'Marcar Disponível'}
                                     </button>
@@ -4188,9 +4194,66 @@ async function carregarDadosApi() {
             `;
         }
 
+        let livroEmEdicao = null;
+        let capaLivroAtual = '';
+
+        function adminMostrarEditorLivros(mostrar) {
+            if (document.getElementById('admin-livro-salvar').disabled) return;
+            document.getElementById('admin-livro-editor').style.display = mostrar ? 'block' : 'none';
+            document.getElementById('admin-livros-cadastrados').style.display = mostrar ? 'none' : 'block';
+            if (!mostrar) adminRenderizarTabelaLivros();
+        }
+
+        function adminAbrirCadastroLivro() {
+            if (document.getElementById('admin-livro-salvar').disabled) return;
+            adminCancelarEdicaoLivro();
+            adminMostrarEditorLivros(true);
+        }
+
+        function adminCancelarEdicaoLivro() {
+            livroEmEdicao = null;
+            document.getElementById('admin-livro-form').reset();
+            document.querySelectorAll('#admin-livro-form option[data-legado]').forEach(opcao => opcao.remove());
+            document.getElementById('admin-livro-form-titulo').textContent = '➕ Cadastrar Novo Livro no Acervo';
+            document.getElementById('admin-livro-salvar').textContent = '➕ Salvar e Publicar Livro';
+            document.getElementById('admin-livro-cancelar').hidden = true;
+            adminRemoverCapa();
+        }
+
+        function adminEditarLivro(id) {
+            if (document.getElementById('admin-livro-salvar').disabled) return;
+            const livro = ACERVO_LIVROS.find(l => l.id === id);
+            if (!livro) return;
+            adminCancelarEdicaoLivro();
+            livroEmEdicao = id;
+            for (const campo of ['titulo', 'autor', 'editora', 'edicao', 'isbn', 'categoria', 'formato', 'paginas', 'ano', 'sinopse', 'previa']) {
+                const input = document.getElementById('admin-livro-' + campo);
+                const valor = String(livro[campo] ?? '');
+                if (input.tagName === 'SELECT' && !Array.from(input.options).some(o => o.value === valor)) {
+                    const opcao = new Option(valor || 'Não informado', valor);
+                    opcao.dataset.legado = '1';
+                    input.add(opcao);
+                }
+                input.value = valor;
+            }
+            capaLivroAtual = livro.capa || '';
+            const preview = document.getElementById('admin-livro-capa-preview');
+            preview.src = capaLivroAtual;
+            preview.hidden = !capaLivroAtual;
+            document.getElementById('admin-livro-form-titulo').textContent = 'Editar livro: ' + livro.titulo;
+            document.getElementById('admin-livro-salvar').textContent = 'Salvar alterações';
+            document.getElementById('admin-livro-cancelar').hidden = false;
+            adminMostrarEditorLivros(true);
+            document.getElementById('admin-livro-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            document.getElementById('admin-livro-titulo').focus({ preventScroll: true });
+        }
+
         function adminRemoverCapa() {
+            capaLivroAtual = '';
             document.getElementById('admin-livro-capa').value = '';
             const preview = document.getElementById('admin-livro-capa-preview');
+            preview.onload = null;
+            preview.onerror = null;
             preview.hidden = true;
             preview.removeAttribute('src');
         }
@@ -4238,6 +4301,8 @@ async function carregarDadosApi() {
             if (botao.disabled) return;
             if (!confirm(`Confirme os dados do livro antes de publicar:\n\nTítulo: ${titulo}\nAutor: ${autor}\nEditora: ${editora || 'Não informada'}\nEdição: ${edicao || 'Não informada'}\nISBN: ${isbn || 'Não informado'}\nGênero: ${categoria}\nFormato: ${formato}\nPáginas: ${paginas}\nAno: ${ano}\n\nSalvar e publicar?`)) return;
             botao.disabled = true;
+            const idEdicao = livroEmEdicao;
+            document.getElementById('admin-livro-cancelar').disabled = true;
             try {
                 const arquivo = document.getElementById('admin-livro-capa').files[0];
                 const capa = arquivo ? await new Promise((resolve, reject) => {
@@ -4245,13 +4310,15 @@ async function carregarDadosApi() {
                     leitor.onload = () => resolve(leitor.result);
                     leitor.onerror = () => reject(new Error('Não foi possível ler a foto. Tente selecioná-la novamente.'));
                     leitor.readAsDataURL(arquivo);
-                }) : '';
-                const resultado = await apiFetch('/api/livros', {
-                    method: 'POST',
+                }) : capaLivroAtual;
+                const resultado = await apiFetch(idEdicao === null ? '/api/livros' : '/api/livros/' + idEdicao, {
+                    method: idEdicao === null ? 'POST' : 'PUT',
                     body: JSON.stringify({ titulo, autor, editora, edicao, isbn, categoria, formato, paginas, ano, sinopse, previa, capa })
                 });
 
-                ACERVO_LIVROS.push({ id: resultado.id, titulo, autor, editora, edicao, isbn, categoria, formato, paginas, ano, sinopse, previa, capa, disponivel: true });
+                const dados = { id: resultado.id, titulo, autor, editora, edicao, isbn, categoria, formato, paginas, ano, sinopse, previa, capa };
+                if (idEdicao === null) ACERVO_LIVROS.push({ ...dados, disponivel: true });
+                else Object.assign(ACERVO_LIVROS.find(l => l.id === idEdicao), dados);
                 adminRenderizarTabelaLivros();
                 renderizarAcervo();
                 adminAtualizarKPIs();
@@ -4267,11 +4334,13 @@ async function carregarDadosApi() {
                 document.getElementById('admin-livro-ano').value = '';
                 adminRemoverCapa();
 
-                alert(`✅ Livro "${titulo}" cadastrado com sucesso! Já está visível na aba Biblioteca para os alunos.`);
+                adminCancelarEdicaoLivro();
+                alert(`✅ Livro "${titulo}" ${idEdicao === null ? 'cadastrado' : 'atualizado'} com sucesso!`);
             } catch (e) {
-                alert('Erro ao cadastrar livro: ' + e.message);
+                alert('Erro ao salvar livro: ' + e.message);
             } finally {
                 botao.disabled = false;
+                document.getElementById('admin-livro-cancelar').disabled = false;
             }
         }
 

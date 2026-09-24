@@ -12,7 +12,7 @@ const { autenticar } = sessao;
 
 app.use('/api', sessao.protegerRequisicao);
 app.use('/api/livros', (req, res, next) => {
-  if (req.method !== 'POST') return next();
+  if (!['POST', 'PUT'].includes(req.method)) return next();
   autenticar(req, res, () => adminOnly(req, res, () => express.json({ limit: '3mb' })(req, res, next)));
 });
 app.use(express.json());
@@ -91,22 +91,36 @@ app.get('/api/livros/:id', autenticar, handle(async (req, res) => {
   res.json({ ...livro, disponivel: !!livro.disponivel, resenhas: resenhasComCurtidas });
 }));
 
-app.post('/api/livros', autenticar, adminOnly, handle(async (req, res) => {
-  const { titulo, autor, editora = '', edicao = '', isbn = '', categoria, formato, paginas, ano, sinopse, previa, capa = '' } = req.body;
+const salvarLivro = handle(async (req, res) => {
+  const existente = req.params.id ? await db.prepare('SELECT * FROM livros WHERE id = ?').get(req.params.id) : null;
+  if (req.params.id && !existente) return res.status(404).json({ erro: 'Livro não encontrado' });
+  const { titulo, autor, editora = '', edicao = '', isbn = '', categoria, formato, paginas, ano, sinopse, previa, capa = '' } = { ...existente, ...req.body };
   if (!titulo) return res.status(400).json({ erro: 'Título obrigatório' });
   if (typeof editora !== 'string' || editora.length > 200 || typeof edicao !== 'string' || edicao.length > 100 || typeof isbn !== 'string' || isbn.length > 32) {
     return res.status(400).json({ erro: 'Confira os campos Editora, Edição e ISBN.' });
   }
   const isbnLimpo = isbn.replace(/[\s-]/g, '').toUpperCase();
-  if (isbnLimpo && !/^(\d{9}[\dX]|\d{13})$/.test(isbnLimpo)) {
+  if (isbnLimpo && isbn !== existente?.isbn && !/^(\d{9}[\dX]|\d{13})$/.test(isbnLimpo)) {
     return res.status(400).json({ erro: 'Informe um ISBN com 10 ou 13 caracteres, ou deixe em branco.' });
   }
-  if (typeof capa !== 'string' || (capa && (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(capa) || Buffer.from(capa.split(',')[1], 'base64').length > 2 * 1024 * 1024))) {
+  if (typeof capa !== 'string' || (capa && capa !== existente?.capa && (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(capa) || Buffer.from(capa.split(',')[1], 'base64').length > 2 * 1024 * 1024))) {
     return res.status(400).json({ erro: 'Envie uma capa JPG, PNG ou WebP de até 2 MB.' });
   }
-  const id = await db.cadastrarLivro({ titulo, autor, editora: editora.trim(), edicao: edicao.trim(), isbn: isbn.trim(), categoria, formato, paginas, ano, sinopse, previa, capa });
+  let id;
+  if (existente) {
+    const result = await db.prepare(`UPDATE livros SET titulo = ?, autor = ?, editora = ?, edicao = ?, isbn = ?, categoria = ?,
+      formato = ?, paginas = ?, ano = ?, sinopse = ?, previa = ?, capa = ? WHERE id = ?`).run(
+      titulo, autor || '', editora.trim(), edicao.trim(), isbn.trim(), categoria || 'Geral', formato || 'Fisico',
+      paginas || 0, ano || '', sinopse || '', previa || '', capa, existente.id);
+    if (!result.changes) return res.status(404).json({ erro: 'Livro não encontrado' });
+    id = existente.id;
+  } else {
+    id = await db.cadastrarLivro({ titulo, autor, editora: editora.trim(), edicao: edicao.trim(), isbn: isbn.trim(), categoria, formato, paginas, ano, sinopse, previa, capa });
+  }
   res.json({ id, ok: true });
-}));
+});
+app.post('/api/livros', autenticar, adminOnly, salvarLivro);
+app.put('/api/livros/:id', autenticar, adminOnly, salvarLivro);
 
 app.delete('/api/livros/:id', autenticar, adminOnly, handle(async (req, res) => {
   await db.prepare('DELETE FROM livros WHERE id = ?').run(req.params.id);

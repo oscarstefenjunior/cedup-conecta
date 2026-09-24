@@ -68,6 +68,26 @@ async function main() {
     const grande = await post('/api/livros', { titulo: 'Grande', capa: 'data:image/png;base64,' + Buffer.alloc(2 * 1024 * 1024 + 1).toString('base64') });
     assert.equal(grande.status, 400);
     assert.equal((await db.prepare('SELECT COUNT(*) AS total FROM livros').get()).total, 3);
+    async function editar(id, body) {
+      return fetch(base + '/api/livros/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Cedup-Request': '1', Cookie: cookie }, body: JSON.stringify(body) });
+    }
+    await db.prepare('UPDATE livros SET disponivel = 0, capa = ?, isbn = ? WHERE id = 3').run('capas/livro1.jpg', '—');
+    await db.prepare("INSERT INTO emprestimos_livros (id_livro, matricula, data_emprestimo, data_devolucao) VALUES (?, ?, NOW(), NOW() + INTERVAL '7 days')").run(3, 'teste-admin');
+    assert.equal((await editar(3, { titulo: 'Livro completado', editora: 'Atlas', edicao: '3ª edição' })).status, 200);
+    let editado = await db.prepare('SELECT * FROM livros WHERE id = 3').get();
+    assert.equal(editado.editora, 'Atlas');
+    assert.equal(editado.edicao, '3ª edição');
+    assert.equal(editado.capa, 'capas/livro1.jpg');
+    assert.equal(editado.disponivel, 0);
+    assert.equal((await db.prepare('SELECT id_livro FROM emprestimos_livros WHERE id_livro = 3').get()).idLivro, 3);
+    assert.equal((await editar(3, { capa, isbn: '978-85-02-08920-4' })).status, 200);
+    assert.equal((await db.prepare('SELECT capa FROM livros WHERE id = 3').get()).capa, capa);
+    assert.equal((await editar(3, { capa: '' })).status, 200);
+    assert.equal((await db.prepare('SELECT capa FROM livros WHERE id = 3').get()).capa, '');
+    assert.equal((await editar(3, { isbn: '123' })).status, 400);
+    assert.equal((await editar(9999, { titulo: 'Ausente' })).status, 404);
+    assert.equal((await db.prepare('SELECT COUNT(*) AS total FROM livros').get()).total, 3);
+    console.log('OK: editar dados, manter/trocar/remover capa, preservar empréstimo e ID sem duplicar livros.');
     const professor = await post('/api/admin/alunos', { nome: 'Professor teste', matricula: '1234567890', tipo: 'professor' });
     assert.equal(professor.status, 200);
     const promover = await post('/api/admin/alunos', { nome: 'Admin indevido', matricula: '1234567891', tipo: 'professor', isAdmin: true });
@@ -78,6 +98,7 @@ async function main() {
     assert.equal(perfilProfessor.isAdmin, false);
     assert.equal(perfilProfessor.isProfessor, true);
     cookie = loginProfessor.headers.get('set-cookie').split(';')[0];
+    assert.equal((await editar(3, { titulo: 'Professor não edita' })).status, 403);
     assert.equal((await post('/api/livros', { titulo: 'Professor não pode cadastrar' })).status, 403);
     assert.equal((await post('/api/admin/alunos', { nome: 'Outro', matricula: '1234567892' })).status, 403);
     const novoDesafio = await post('/api/desafios', { titulo: '2º ano — Leitura', xp: 100, tipo: 'atividade' });
@@ -99,6 +120,7 @@ async function main() {
     const loginAluno = await post('/api/login', { matricula: 'aluno-teste', senha: 'senha-teste' });
     assert.equal(loginAluno.status, 200);
     cookie = loginAluno.headers.get('set-cookie').split(';')[0];
+    assert.equal((await editar(3, { titulo: 'Aluno não edita' })).status, 403);
     assert.equal((await post('/api/desafios', { titulo: 'Aluno não cria', xp: 100 })).status, 403);
     const lista = await (await fetch(base + '/api/desafios', { headers: { Cookie: cookie } })).json();
     assert.equal(lista.desafios.some(d => d.id === desafio.id), true);
