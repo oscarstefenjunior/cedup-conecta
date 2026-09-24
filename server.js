@@ -11,6 +11,10 @@ const sessao = criarAutenticacao(db);
 const { autenticar } = sessao;
 
 app.use('/api', sessao.protegerRequisicao);
+app.use('/api/livros', (req, res, next) => {
+  if (req.method !== 'POST') return next();
+  autenticar(req, res, () => adminOnly(req, res, () => express.json({ limit: '3mb' })(req, res, next)));
+});
 app.use(express.json());
 
 const serveEstatico = express.static(path.join(__dirname), { dotfiles: 'deny', index: false });
@@ -88,11 +92,14 @@ app.get('/api/livros/:id', autenticar, handle(async (req, res) => {
 }));
 
 app.post('/api/livros', autenticar, adminOnly, handle(async (req, res) => {
-  const { titulo, autor, categoria, formato, paginas, ano, sinopse, previa } = req.body;
+  const { titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa = '' } = req.body;
   if (!titulo) return res.status(400).json({ erro: 'Título obrigatório' });
+  if (typeof capa !== 'string' || (capa && (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(capa) || Buffer.from(capa.split(',')[1], 'base64').length > 2 * 1024 * 1024))) {
+    return res.status(400).json({ erro: 'Envie uma capa JPG, PNG ou WebP de até 2 MB.' });
+  }
   const id = Date.now();
-  await db.prepare(`INSERT INTO livros (id, titulo, autor, categoria, formato, paginas, ano, sinopse, previa, disponivel)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`).run(id, titulo, autor || '', categoria || 'Geral', formato || 'Fisico', paginas || 0, ano || '', sinopse || '', previa || '');
+  await db.prepare(`INSERT INTO livros (id, titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa, disponivel)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`).run(id, titulo, autor || '', categoria || 'Geral', formato || 'Fisico', paginas || 0, ano || '', sinopse || '', previa || '', capa);
   res.json({ id, ok: true });
 }));
 

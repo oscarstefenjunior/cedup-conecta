@@ -2190,6 +2190,14 @@
                             </div>
 
                             <div class="form-admin-grupo" style="margin-bottom: 15px;">
+                                <label for="admin-livro-capa">Foto da capa (opcional)</label>
+                                <input type="file" id="admin-livro-capa" accept="image/jpeg,image/png,image/webp" onchange="adminSelecionarCapa()" aria-describedby="admin-livro-capa-ajuda">
+                                <small id="admin-livro-capa-ajuda">JPG, PNG ou WebP de até 2 MB.</small>
+                                <img id="admin-livro-capa-preview" alt="Prévia da capa selecionada" hidden style="max-width: 150px; max-height: 200px; object-fit: contain; margin-top: 10px; border-radius: 6px;">
+                                <button type="button" onclick="adminRemoverCapa()" style="margin-top: 8px;">Remover foto</button>
+                            </div>
+
+                            <div class="form-admin-grupo" style="margin-bottom: 15px;">
                                 <label for="admin-livro-sinopse">Sinopse / Conteúdo Técnico *</label>
                                 <textarea id="admin-livro-sinopse" rows="2" placeholder="Breve descrição da obra e temas abordados..." required></textarea>
                             </div>
@@ -4100,6 +4108,33 @@ async function carregarDadosApi() {
             `;
         }
 
+        function adminRemoverCapa() {
+            document.getElementById('admin-livro-capa').value = '';
+            const preview = document.getElementById('admin-livro-capa-preview');
+            preview.hidden = true;
+            preview.removeAttribute('src');
+        }
+
+        function adminSelecionarCapa() {
+            const arquivo = document.getElementById('admin-livro-capa').files[0];
+            if (!arquivo) return adminRemoverCapa();
+            if (!['image/jpeg', 'image/png', 'image/webp'].includes(arquivo.type) || arquivo.size > 2 * 1024 * 1024) {
+                adminRemoverCapa();
+                alert('Selecione uma imagem JPG, PNG ou WebP de até 2 MB.');
+                return;
+            }
+            const preview = document.getElementById('admin-livro-capa-preview');
+            const url = URL.createObjectURL(arquivo);
+            preview.onload = () => URL.revokeObjectURL(url);
+            preview.onerror = () => {
+                URL.revokeObjectURL(url);
+                adminRemoverCapa();
+                alert('Não foi possível abrir essa imagem. Selecione outra foto.');
+            };
+            preview.src = url;
+            preview.hidden = false;
+        }
+
         async function adminCadastrarLivro(e) {
             e.preventDefault();
             const titulo = document.getElementById('admin-livro-titulo').value.trim();
@@ -4116,12 +4151,23 @@ async function carregarDadosApi() {
                 return;
             }
 
+            const botao = e.currentTarget.querySelector('button[type="submit"]');
+            if (botao.disabled) return;
+            botao.disabled = true;
             try {
-                await apiFetch('/api/livros', {
+                const arquivo = document.getElementById('admin-livro-capa').files[0];
+                const capa = arquivo ? await new Promise((resolve, reject) => {
+                    const leitor = new FileReader();
+                    leitor.onload = () => resolve(leitor.result);
+                    leitor.onerror = () => reject(new Error('Não foi possível ler a foto. Tente selecioná-la novamente.'));
+                    leitor.readAsDataURL(arquivo);
+                }) : '';
+                const resultado = await apiFetch('/api/livros', {
                     method: 'POST',
-                    body: JSON.stringify({ titulo, autor, categoria, formato, paginas, ano, sinopse, previa })
+                    body: JSON.stringify({ titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa })
                 });
 
+                ACERVO_LIVROS.push({ id: resultado.id, titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa, disponivel: true });
                 adminRenderizarTabelaLivros();
                 renderizarAcervo();
                 adminAtualizarKPIs();
@@ -4132,10 +4178,13 @@ async function carregarDadosApi() {
                 document.getElementById('admin-livro-previa').value = '';
                 document.getElementById('admin-livro-paginas').value = '';
                 document.getElementById('admin-livro-ano').value = '';
+                adminRemoverCapa();
 
                 alert(`✅ Livro "${titulo}" cadastrado com sucesso! Já está visível na aba Biblioteca para os alunos.`);
             } catch (e) {
                 alert('Erro ao cadastrar livro: ' + e.message);
+            } finally {
+                botao.disabled = false;
             }
         }
 
