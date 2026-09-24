@@ -42,7 +42,7 @@
 
         /* --- TELA DE LOGIN --- */
         #tela-login {
-            display: flex;
+            display: none;
             align-items: center;
             justify-content: center;
             flex: 1;
@@ -1750,6 +1750,7 @@
 </head>
 <body>
 
+    <div id="carregando-sessao" role="status" style="margin: auto; padding: 40px; text-align: center;">Carregando sua página…</div>
     <div id="tela-login">
         <div class="card-login">
             <img src="images.png" alt="Logo Cedup Hermann Hering" class="logo-login">
@@ -2436,7 +2437,6 @@
             };
             document.getElementById('senha').value = '';
             document.getElementById('tela-login').style.display = 'none';
-            document.getElementById('sistema-interno').style.display = 'flex';
             document.getElementById('erro-mensagem').style.display = 'none';
             document.getElementById('item-nav-admin').style.display = usuario.isAdmin ? 'block' : 'none';
             atualizarPerfilUsuario(usuarioLogado);
@@ -2444,7 +2444,12 @@
             if (!sessaoAtiva || saindo) return;
             if (novoLogin) incrementarProgresso('login', 1);
             iniciarBanner();
-            navegar('inicio');
+            const [secao, aba] = novoLogin ? ['inicio'] : window.location.hash.slice(1).split('/');
+            navegar(secao || 'inicio');
+            if (secao === 'admin' && usuario.isAdmin) restaurarAba(aba, 'admin-subsecao', 'btn-admin-tab', adminNavegarAba);
+            if (secao === 'reservas') restaurarAba(aba, 'reservas-subsecao', 'btn-reserva-tab', reservasNavegarAba);
+            document.getElementById('carregando-sessao').style.display = 'none';
+            document.getElementById('sistema-interno').style.display = 'flex';
         }
 
         async function restaurarSessao() {
@@ -2459,6 +2464,8 @@
                 }
             } finally {
                 verificandoSessao = false;
+                document.getElementById('carregando-sessao').style.display = 'none';
+                if (!sessaoAtiva) document.getElementById('tela-login').style.display = 'flex';
                 const botao = document.getElementById('btn-acessar');
                 botao.disabled = false;
                 botao.textContent = 'Entrar no Sistema';
@@ -2661,10 +2668,26 @@ async function carregarDadosApi() {
         }
 
         // --- Navegação entre Abas ---
+        function restaurarAba(id, classe, classeBotao, navegarAba) {
+            const alvo = document.getElementById(id);
+            if (!alvo || !alvo.classList.contains(classe)) return;
+            const botao = Array.from(document.getElementsByClassName(classeBotao))
+                .find(b => (b.getAttribute('onclick') || '').includes("'" + id + "'"));
+            navegarAba(id, botao);
+        }
+
+        function registrarPagina(idSecao) {
+            const subsecao = idSecao === 'admin' ? document.querySelector('.admin-subsecao.ativa')
+                : idSecao === 'reservas' ? document.querySelector('.reservas-subsecao.ativa') : null;
+            history.replaceState(null, '', '#' + idSecao + (subsecao ? '/' + subsecao.id : ''));
+        }
+
         function navegar(idSecao) {
+            const alvo = document.getElementById(idSecao);
+            if (!alvo || !alvo.classList.contains('secao-conteudo')) idSecao = 'inicio';
             // Bloqueia acesso à área administrativa se não for admin
             if (idSecao === 'admin' && (!usuarioLogado || !usuarioLogado.isAdmin)) {
-                return;
+                idSecao = 'inicio';
             }
 
             const secoes = document.querySelectorAll('.secao-conteudo');
@@ -2676,6 +2699,7 @@ async function carregarDadosApi() {
             document.getElementById(idSecao).classList.add('ativa');
             const linkAtivo = document.getElementById('nav-' + idSecao);
             if (linkAtivo) linkAtivo.classList.add('ativo');
+            registrarPagina(idSecao);
         }
 
         // --- Mecanismo do Banner Interativo ---
@@ -3620,6 +3644,7 @@ async function carregarDadosApi() {
             const target = document.getElementById(idAba);
             if (target) target.classList.add('ativa');
             if (btnElement) btnElement.classList.add('ativo');
+            registrarPagina('reservas');
         }
 
         function obterCategoriaClasse(categoria) {
@@ -4025,6 +4050,7 @@ async function carregarDadosApi() {
             const target = document.getElementById(idAba);
             if (target) target.classList.add('ativa');
             if (btnElement) btnElement.classList.add('ativo');
+            registrarPagina('admin');
 
             adminAtualizarKPIs();
             if (idAba === 'admin-biblioteca') adminRenderizarTabelaLivros();
