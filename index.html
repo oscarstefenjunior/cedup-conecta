@@ -1766,7 +1766,7 @@
                 <small style="display: block; margin-top: 5px; color: #666; font-size: 0.8rem;">Sua senha inicial são os 6 primeiros dígitos da sua matrícula.</small>
             </div>
             
-            <button class="btn-acessar" onclick="validarLogin()">Entrar no Sistema</button>
+            <button id="btn-acessar" class="btn-acessar" onclick="validarLogin()" disabled>Verificando sessão...</button>
             <div id="erro-mensagem" class="erro-login">Matrícula ou senha incorretos! Digite a matrícula cadastrada e seus 6 primeiros dígitos como senha.</div>
         </div>
     </div>
@@ -2381,9 +2381,11 @@
 
 
     <script>
-        // --- Sistema de Autenticação via API (LGPD Compliant) ---
+        // --- Sessão por cookie HttpOnly; o identificador não fica no JavaScript ---
         const API_BASE = '';
-        let tokenSessao = null;
+        let sessaoAtiva = false;
+        let verificandoSessao = true;
+        let saindo = false;
         let usuarioLogado = null;
         let xpAtual = 0;
 
@@ -2397,11 +2399,62 @@
 
         async function apiFetch(url, options = {}) {
             const headers = { 'Content-Type': 'application/json', ...options.headers };
-            if (tokenSessao) headers['Authorization'] = `Bearer ${tokenSessao}`;
-            const res = await fetch(API_BASE + url, { ...options, headers });
+            const method = (options.method || 'GET').toUpperCase();
+            const escrita = !['GET', 'HEAD'].includes(method);
+            if (escrita) headers['X-Cedup-Request'] = '1';
+            const res = await fetch(API_BASE + url, {
+                ...options, method, headers, credentials: 'same-origin', cache: 'no-store',
+                ...(escrita ? { body: options.body || '{}' } : {})
+            });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.erro || 'Erro na requisição');
+            if (!res.ok) {
+                if (res.status === 401 && sessaoAtiva && url !== '/api/login') encerrarInterface();
+                const erro = new Error(data.erro || 'Erro na requisição');
+                erro.status = res.status;
+                throw erro;
+            }
+            if (saindo && url !== '/api/logout') throw new Error('Sessão encerrada');
             return data;
+        }
+
+        async function ativarSessao(usuario, novoLogin = false) {
+            sessaoAtiva = true;
+            xpAtual = usuario.xp || 0;
+            usuarioLogado = {
+                ...usuario,
+                matriculaFormatada: '#' + usuario.matricula,
+                score: xpAtual.toLocaleString('pt-BR') + ' XP',
+                ranking: usuario.isAdmin ? 'Painel do Professor / Admin' : 'Estudante Cadastrado'
+            };
+            document.getElementById('senha').value = '';
+            document.getElementById('tela-login').style.display = 'none';
+            document.getElementById('sistema-interno').style.display = 'flex';
+            document.getElementById('erro-mensagem').style.display = 'none';
+            document.getElementById('item-nav-admin').style.display = usuario.isAdmin ? 'block' : 'none';
+            atualizarPerfilUsuario(usuarioLogado);
+            await carregarDadosApi();
+            if (!sessaoAtiva || saindo) return;
+            if (novoLogin) incrementarProgresso('login', 1);
+            iniciarBanner();
+            navegar('inicio');
+        }
+
+        async function restaurarSessao() {
+            try {
+                const usuario = await apiFetch('/api/usuario/perfil');
+                await ativarSessao(usuario);
+            } catch (erro) {
+                if (erro.status !== 401) {
+                    const mensagem = document.getElementById('erro-mensagem');
+                    mensagem.textContent = 'Não foi possível verificar sua sessão. Tente novamente.';
+                    mensagem.style.display = 'block';
+                }
+            } finally {
+                verificandoSessao = false;
+                const botao = document.getElementById('btn-acessar');
+                botao.disabled = false;
+                botao.textContent = 'Entrar no Sistema';
+            }
         }
 
         function adicionarXP(qtd) {
@@ -2410,11 +2463,15 @@
             if (elScore) elScore.textContent = xpAtual.toLocaleString('pt-BR') + ' XP';
             const elGamificacao = document.getElementById('gamificacao-xp');
             if (elGamificacao) elGamificacao.textContent = xpAtual.toLocaleString('pt-BR') + ' XP';
-            if (tokenSessao) apiFetch('/api/usuario/xp', { method: 'PUT', body: JSON.stringify({ adicionar: qtd }) }).catch(() => {});
+            if (sessaoAtiva) apiFetch('/api/usuario/xp', { method: 'PUT', body: JSON.stringify({ adicionar: qtd }) }).catch(() => {});
         }
 
         // --- Sistema de Login via API ---
         async function validarLogin() {
+            if (verificandoSessao || saindo) return;
+            verificandoSessao = true;
+            const botao = document.getElementById('btn-acessar');
+            botao.disabled = true;
             const matriculaInput = document.getElementById('matricula').value.trim().replace('#', '');
             const passIn = document.getElementById('senha').value.trim();
             const erroMsg = document.getElementById('erro-mensagem');
@@ -2425,35 +2482,13 @@
                     body: JSON.stringify({ matricula: matriculaInput, senha: passIn })
                 });
 
-                tokenSessao = data.token;
-                xpAtual = data.usuario.xp || 0;
-
-                usuarioLogado = {
-                    nome: data.usuario.nome,
-                    curso: data.usuario.curso,
-                    matriculaFormatada: '#' + data.usuario.matricula,
-                    xp: data.usuario.xp || 0,
-                    score: (data.usuario.xp || 0).toLocaleString('pt-BR') + ' XP',
-                    ranking: data.usuario.isAdmin ? 'Painel do Professor / Admin' : 'Estudante Cadastrado',
-                    avatar: data.usuario.avatar,
-                    isAdmin: data.usuario.isAdmin
-                };
-
-                document.getElementById('tela-login').style.display = 'none';
-                document.getElementById('sistema-interno').style.display = 'flex';
-                erroMsg.style.display = 'none';
-
-                const itemNavAdmin = document.getElementById('item-nav-admin');
-                if (itemNavAdmin) itemNavAdmin.style.display = data.usuario.isAdmin ? 'block' : 'none';
-
-                atualizarPerfilUsuario(usuarioLogado);
-                await carregarDadosApi();
-                incrementarProgresso('login', 1);
-                iniciarBanner();
-                navegar('inicio');
+                await ativarSessao(data.usuario, true);
             } catch (e) {
                 erroMsg.textContent = e.message || 'Matrícula ou senha inválidos';
                 erroMsg.style.display = 'block';
+            } finally {
+                verificandoSessao = false;
+                botao.disabled = false;
             }
         }
 
@@ -2476,10 +2511,16 @@
             if (elPosicao) elPosicao.textContent = usuario.ranking;
         }
 
-        function fazerLogout() {
+        function encerrarInterface() {
+            saindo = true;
             usuarioLogado = null;
-            tokenSessao = null;
+            sessaoAtiva = false;
             xpAtual = 0;
+            clearInterval(intervaloBanner);
+            listaAlunosCache = [];
+            locacoesUsuario = [];
+            emprestimosItensUsuario = [];
+            reservasComputadores = [];
             const itemNavAdmin = document.getElementById('item-nav-admin');
             if (itemNavAdmin) {
                 itemNavAdmin.style.display = 'none';
@@ -2490,12 +2531,26 @@
             document.getElementById('senha').value = '';
             const erroMsg = document.getElementById('erro-mensagem');
             if (erroMsg) erroMsg.style.display = 'none';
+            // Um novo documento descarta DOM, caches e requisições da conta anterior.
+            window.location.replace('/');
+        }
+
+        async function fazerLogout() {
+            if (saindo) return;
+            saindo = true;
+            try {
+                await apiFetch('/api/logout', { method: 'POST' });
+                encerrarInterface();
+            } catch (erro) {
+                saindo = false;
+                alert('Não foi possível encerrar a sessão. Verifique sua conexão e tente sair novamente.');
+            }
         }
 
         // --- Devolver livro no backend ---
         async function devolverLivroNoBackend(idLivro) {
             const loc = locacoesUsuario.find(l => l.idLivro === idLivro && l.tipo === 'fisico');
-            if (loc && loc.idEmprestimo && tokenSessao) {
+            if (loc && loc.idEmprestimo && sessaoAtiva) {
                 try { await apiFetch(`/api/emprestimos/${loc.idEmprestimo}/devolver`, { method: 'POST' }); } catch(e) {}
             }
         }
@@ -2637,6 +2692,7 @@ async function carregarDadosApi() {
         }
 
         function iniciarBanner() {
+            clearInterval(intervaloBanner);
             intervaloBanner = setInterval(() => {
                 slideAtual++;
                 mostrarSlide(slideAtual);
@@ -2875,7 +2931,7 @@ async function carregarDadosApi() {
             if (!modal) return;
 
             let resenhas = [];
-            if (tokenSessao) {
+            if (sessaoAtiva) {
                 try {
                     const detalhe = await apiFetch('/api/livros/' + idLivro);
                     resenhas = detalhe.resenhas || [];
@@ -3487,7 +3543,7 @@ async function carregarDadosApi() {
             const container = document.getElementById('lista-reservas-usuario');
             if (!container) return;
 
-            if (!tokenSessao) {
+            if (!sessaoAtiva) {
                 container.innerHTML = `
                     <div style="text-align: center; padding: 25px 10px; color: #777;">
                         <p style="font-size: 0.9rem; margin-bottom: 5px;">Nenhuma reserva agendada.</p>
@@ -3979,7 +4035,7 @@ async function carregarDadosApi() {
             if (elLocacoes) elLocacoes.textContent = locacoesUsuario.length;
             if (elDesafios) elDesafios.textContent = DESAFIOS_SISTEMA.length;
 
-            if (tokenSessao && usuarioLogado?.isAdmin) {
+            if (sessaoAtiva && usuarioLogado?.isAdmin) {
                 try {
                     const stats = await apiFetch('/api/admin/stats');
                     if (elAlunos) elAlunos.textContent = stats.totalAlunos.toLocaleString('pt-BR');
@@ -4445,7 +4501,7 @@ async function carregarDadosApi() {
                     medalhasDesbloqueadas.add(medalha.id);
                     adicionarXP(medalha.xp);
                     mostrarPopupMedalha(medalha);
-                    if (tokenSessao) {
+                    if (sessaoAtiva) {
                         try { await apiFetch('/api/medalhas/desbloquear', { method: 'POST', body: JSON.stringify({ idMedalha: medalha.id, xp: medalha.xp }) }); } catch(e) {}
                     }
                 }
@@ -4486,7 +4542,7 @@ async function carregarDadosApi() {
             if (chave === 'xp_semanal' && xpAtual > 0) {
                 progressoAluno.xp_semanal = xpAtual;
             }
-            if (tokenSessao) {
+            if (sessaoAtiva) {
                 try { await apiFetch('/api/medalhas/incrementar', { method: 'POST', body: JSON.stringify({ chave, valor: valor || 1 }) }); } catch(e) {}
             }
             verificarMedalhas();
@@ -4657,7 +4713,8 @@ async function carregarDadosApi() {
         // --- EXPORTAÇÃO EM CSV E RELATÓRIOS ---
         async function adminExportarCSV() {
             try {
-                const res = await fetch('/api/admin/export/csv', { headers: { 'Authorization': `Bearer ${tokenSessao}` } });
+                const res = await fetch('/api/admin/export/csv', { credentials: 'same-origin', cache: 'no-store' });
+                if (res.status === 401) encerrarInterface();
                 if (!res.ok) throw new Error('Erro na exportação (HTTP ' + res.status + ')');
                 const blob = await res.blob();
                 const url = URL.createObjectURL(blob);
@@ -4694,6 +4751,14 @@ async function carregarDadosApi() {
 
             const inputDataAchado = document.getElementById('admin-achado-data');
             if (inputDataAchado) inputDataAchado.value = new Date().toISOString().split('T')[0];
+            restaurarSessao();
+        });
+
+        window.addEventListener('pagehide', () => {
+            document.getElementById('sistema-interno').style.display = 'none';
+        });
+        window.addEventListener('pageshow', event => {
+            if (event.persisted) window.location.reload();
         });
     </script>
 

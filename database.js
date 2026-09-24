@@ -46,6 +46,32 @@ function prepare(sql) {
   };
 }
 
+let sessionsReady;
+function initSessions() {
+  if (!sessionsReady) {
+    sessionsReady = pool.query(`
+      CREATE TABLE IF NOT EXISTS sessoes (
+        token_hash TEXT PRIMARY KEY,
+        matricula TEXT NOT NULL REFERENCES usuarios(matricula) ON DELETE CASCADE,
+        credencial_hash TEXT NOT NULL,
+        expira_em TIMESTAMPTZ NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS sessoes_expira_em_idx ON sessoes(expira_em);
+      ALTER TABLE sessoes ENABLE ROW LEVEL SECURITY;
+      REVOKE ALL ON TABLE sessoes FROM PUBLIC;
+      DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+          REVOKE ALL ON TABLE sessoes FROM anon;
+        END IF;
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+          REVOKE ALL ON TABLE sessoes FROM authenticated;
+        END IF;
+      END $$;
+    `).catch(error => { sessionsReady = null; throw error; });
+  }
+  return sessionsReady;
+}
+
 async function init() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS usuarios (
@@ -240,7 +266,8 @@ async function init() {
     );
   `);
 
+  await initSessions();
   console.log('✅ Tabelas criadas/verificadas no PostgreSQL');
 }
 
-module.exports = { prepare, pool, init };
+module.exports = { prepare, pool, init, initSessions };

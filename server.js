@@ -1,16 +1,16 @@
 require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const path = require('path');
 const db = require('./database');
+const { criarAutenticacao } = require('./session');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
+const sessao = criarAutenticacao(db);
+const { autenticar } = sessao;
 
-app.use(cors());
+app.use('/api', sessao.protegerRequisicao);
 app.use(express.json());
 
 const serveEstatico = express.static(path.join(__dirname), { dotfiles: 'deny', index: false });
@@ -21,18 +21,6 @@ app.use((req, res, next) => {
   return next();
 });
 
-function autenticar(req, res, next) {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (!token) return res.status(401).json({ erro: 'Token não fornecido' });
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.usuario = decoded;
-    next();
-  } catch {
-    res.status(401).json({ erro: 'Token inválido' });
-  }
-}
-
 function adminOnly(req, res, next) {
   if (!req.usuario.isAdmin) return res.status(403).json({ erro: 'Acesso negado' });
   next();
@@ -40,51 +28,32 @@ function adminOnly(req, res, next) {
 
 const handle = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-app.use((err, req, res, next) => {
-  console.error('Erro na rota:', err);
-  res.status(500).json({ erro: err.message || 'Erro interno' });
-});
-
 // ==================== AUTH ====================
 
 app.post('/api/login', handle(async (req, res) => {
   const { matricula, senha } = req.body;
-  if (!matricula || !senha) return res.status(400).json({ erro: 'Matrícula e senha obrigatórias' });
+  if (typeof matricula !== 'string' || typeof senha !== 'string' || !matricula || !senha || matricula.length > 100 || senha.length > 200) {
+    return res.status(400).json({ erro: 'Matrícula e senha obrigatórias e válidas' });
+  }
 
   const user = await db.prepare('SELECT * FROM usuarios WHERE matricula = ?').get(matricula);
-  if (!user) return res.status(401).json({ erro: 'Matrícula não encontrada' });
+  if (!user) return res.status(401).json({ erro: 'Matrícula ou senha inválidas' });
 
-  const senhaValida = bcrypt.compareSync(senha, user.senhaHash);
-  if (!senhaValida) return res.status(401).json({ erro: 'Senha incorreta' });
+  const senhaValida = await bcrypt.compare(senha, user.senhaHash);
+  if (!senhaValida) return res.status(401).json({ erro: 'Matrícula ou senha inválidas' });
 
   const isAdmin = await db.prepare('SELECT 1 FROM admins_matriculas WHERE matricula = ?').get(matricula);
 
-  const token = jwt.sign({
-    matricula: user.matricula,
-    nome: user.nome,
-    isAdmin: !!isAdmin || user.isAdmin === 1
-  }, JWT_SECRET, { expiresIn: '12h' });
-
-  res.json({
-    token,
-    usuario: {
-      nome: user.nome,
-      matricula: user.matricula,
-      avatar: user.avatar || user.nome.charAt(0).toUpperCase(),
-      curso: user.curso || (isAdmin ? 'Professor & Administrador CEDUP' : 'Estudante CEDUP Hermann Hering'),
-      isAdmin: !!isAdmin || user.isAdmin === 1,
-      xp: user.xp || 0
-    }
-  });
+  await sessao.iniciar(req, res, user);
+  res.json({ usuario: sessao.perfil({ ...user, adminLista: !!isAdmin }) });
 }));
+
+app.post('/api/logout', handle(sessao.encerrar));
 
 // ==================== USUARIO ====================
 
 app.get('/api/usuario/perfil', autenticar, handle(async (req, res) => {
-  const user = await db.prepare('SELECT matricula, nome, avatar, curso, xp FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
-  if (!user) return res.status(404).json({ erro: 'Usuário não encontrado' });
-  const isAdmin = await db.prepare('SELECT 1 FROM admins_matriculas WHERE matricula = ?').get(req.usuario.matricula);
-  res.json({ ...user, isAdmin: !!isAdmin || user.isAdmin === 1 });
+  res.json(req.usuario);
 }));
 
 app.put('/api/usuario/xp', autenticar, handle(async (req, res) => {
@@ -532,6 +501,14 @@ app.get('/api/admin/export/csv', autenticar, adminOnly, handle(async (req, res) 
 }));
 
 // ==================== START ====================
+
+app.use('/api', (req, res) => res.status(404).json({ erro: 'Rota não encontrada' }));
+
+app.use((err, req, res, next) => {
+  console.error('Erro na rota:', err);
+  const status = err.type === 'entity.parse.failed' ? 400 : err.status === 413 ? 413 : 500;
+  res.status(status).json({ erro: status === 400 ? 'JSON inválido' : status === 413 ? 'Requisição muito grande' : 'Erro interno. Tente novamente.' });
+});
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
