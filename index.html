@@ -1872,13 +1872,7 @@
                         </select>
                     </div>
 
-                    <div class="filtros-categoria">
-                        <button class="btn-filtro ativo" onclick="selecionarCategoriaFiltro('Todos', this)">Todos</button>
-                        <button class="btn-filtro" onclick="selecionarCategoriaFiltro('Informática', this)">💻 Informática & TI</button>
-                        <button class="btn-filtro" onclick="selecionarCategoriaFiltro('Administração', this)">📊 Administração</button>
-                        <button class="btn-filtro" onclick="selecionarCategoriaFiltro('Eletrotécnica', this)">⚡ Eletrotécnica</button>
-                        <button class="btn-filtro" onclick="selecionarCategoriaFiltro('Geral', this)">📚 Geral & Metodologia</button>
-                    </div>
+                    <div id="filtros-genero-livros" class="filtros-categoria" role="group" aria-label="Filtrar por gênero"></div>
                 </div>
 
                 <div class="grid-layout" style="grid-template-columns: 2.6fr 1fr; align-items: start; margin-bottom: 30px;">
@@ -2165,12 +2159,27 @@
                                     <input type="text" id="admin-livro-autor" placeholder="Ex: Thomas Cormen" required>
                                 </div>
                                 <div class="form-admin-grupo">
-                                    <label for="admin-livro-categoria">Gênero do livro</label>
+                                    <label for="admin-livro-categoria">Gênero</label>
                                     <select id="admin-livro-categoria">
-                                        <option value="Informática">💻 Informática & TI</option>
-                                        <option value="Administração">📊 Administração</option>
-                                        <option value="Eletrotécnica">⚡ Eletrotécnica</option>
-                                        <option value="Geral">📚 Geral & Metodologia</option>
+                                        <option value="Romance">Romance</option>
+                                        <option value="Aventura">Aventura</option>
+                                        <option value="Fantasia">Fantasia</option>
+                                        <option value="Ficção científica">Ficção científica</option>
+                                        <option value="Suspense">Suspense</option>
+                                        <option value="Terror">Terror</option>
+                                        <option value="Mistério">Mistério</option>
+                                        <option value="Drama">Drama</option>
+                                        <option value="Humor">Humor</option>
+                                        <option value="Poesia">Poesia</option>
+                                        <option value="Contos">Contos</option>
+                                        <option value="Crônicas">Crônicas</option>
+                                        <option value="Biografia">Biografia</option>
+                                        <option value="História">História</option>
+                                        <option value="Autoajuda">Autoajuda</option>
+                                        <option value="Infantojuvenil">Infantojuvenil</option>
+                                        <option value="Quadrinhos">Quadrinhos</option>
+                                        <option value="Técnico / Didático">Técnico / Didático</option>
+                                        <option value="Outros">Outros</option>
                                     </select>
                                 </div>
                                 <div class="form-admin-grupo">
@@ -2949,7 +2958,7 @@ async function carregarDadosApi() {
 
         function selecionarCategoriaFiltro(categoria, btnElement) {
             categoriaFiltroAtual = categoria;
-            const botoes = document.querySelectorAll('.btn-filtro');
+            const botoes = document.querySelectorAll('#filtros-genero-livros .btn-filtro');
             botoes.forEach(b => b.classList.remove('ativo'));
             if (btnElement) btnElement.classList.add('ativo');
             filtrarLivros();
@@ -4816,6 +4825,16 @@ async function carregarDadosApi() {
 
         // Inicializar renderização inicial do acervo e elementos estáticos
         window.addEventListener('DOMContentLoaded', () => {
+            const filtrosGenero = document.getElementById('filtros-genero-livros');
+            const generos = ['Todos', ...Array.from(document.getElementById('admin-livro-categoria').options, opcao => opcao.value)];
+            generos.forEach(genero => {
+                const botao = document.createElement('button');
+                botao.type = 'button';
+                botao.className = 'btn-filtro' + (genero === 'Todos' ? ' ativo' : '');
+                botao.textContent = genero;
+                botao.onclick = () => selecionarCategoriaFiltro(genero, botao);
+                filtrosGenero.appendChild(botao);
+            });
             renderizarAcervo();
             popularSelectPCs();
             renderizarComputadores();
