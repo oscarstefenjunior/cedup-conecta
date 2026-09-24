@@ -1788,6 +1788,7 @@
                     <li><a onclick="navegar('gamificacao')" id="nav-gamificacao">Conquistas & Desafios</a></li>
                     <li><a onclick="navegar('achados')" id="nav-achados">Achados e Perdidos</a></li>
                     <li id="item-nav-admin" style="display: none;"><a onclick="navegar('admin')" id="nav-admin">Painel Admin</a></li>
+                    <li id="item-nav-professor" style="display: none;"><a onclick="navegar('professor')" id="nav-professor">Criar desafio</a></li>
                     <li><a onclick="fazerLogout()" class="btn-sair">Sair</a></li>
                 </ul>
             </nav>
@@ -2252,7 +2253,7 @@
                                     <label for="admin-novo-tipo">Tipo de Acesso</label>
                                     <select id="admin-novo-tipo">
                                         <option value="aluno">Estudante Regular</option>
-                                        <option value="admin">Professor / Administrador</option>
+                                        <option value="professor">Professor (sem acesso administrativo)</option>
                                     </select>
                                 </div>
                             </div>
@@ -2384,6 +2385,35 @@
 
             </section>
 
+            <section id="professor" class="secao-conteudo">
+                <div class="card">
+                    <h2>Criar desafio</h2>
+                    <p>Publique uma atividade para os alunos. Você pode indicar a turma no título.</p>
+                    <form onsubmit="adminCriarDesafio(event, 'professor')">
+                        <div class="form-admin-grid">
+                            <div class="form-admin-grupo">
+                                <label for="professor-desafio-titulo">Título do desafio *</label>
+                                <input id="professor-desafio-titulo" type="text" placeholder="Ex.: 2º ano — Resenha de um livro" required>
+                            </div>
+                            <div class="form-admin-grupo">
+                                <label for="professor-desafio-xp">Recompensa em XP</label>
+                                <select id="professor-desafio-xp">
+                                    <option value="50">50 XP</option>
+                                    <option value="100" selected>100 XP</option>
+                                    <option value="150">150 XP</option>
+                                    <option value="200">200 XP</option>
+                                    <option value="300">300 XP</option>
+                                </select>
+                            </div>
+                            <div class="form-admin-grupo">
+                                <label for="professor-desafio-prazo">Prazo</label>
+                                <input id="professor-desafio-prazo" type="text" placeholder="Ex.: até sexta-feira" value="Semanal">
+                            </div>
+                        </div>
+                        <button type="submit" class="btn-acao">Publicar desafio</button>
+                    </form>
+                </div>
+            </section>
         </main>
 
         <footer>
@@ -2442,12 +2472,13 @@
                 ...usuario,
                 matriculaFormatada: '#' + usuario.matricula,
                 score: xpAtual.toLocaleString('pt-BR') + ' XP',
-                ranking: usuario.isAdmin ? 'Painel do Professor / Admin' : 'Estudante Cadastrado'
+                ranking: usuario.isAdmin ? 'Administrador' : usuario.isProfessor ? 'Professor' : 'Estudante Cadastrado'
             };
             document.getElementById('senha').value = '';
             document.getElementById('tela-login').style.display = 'none';
             document.getElementById('erro-mensagem').style.display = 'none';
             document.getElementById('item-nav-admin').style.display = usuario.isAdmin ? 'block' : 'none';
+            document.getElementById('item-nav-professor').style.display = usuario.isProfessor ? 'block' : 'none';
             atualizarPerfilUsuario(usuarioLogado);
             await carregarDadosApi();
             if (!sessaoAtiva || saindo) return;
@@ -2526,7 +2557,7 @@
             const elScore = document.getElementById('perfil-score');
             const elPosicao = document.getElementById('perfil-posicao');
 
-            if (elTitulo) elTitulo.textContent = usuario.isAdmin ? "Perfil do Professor / Admin" : "Perfil do Estudante";
+            if (elTitulo) elTitulo.textContent = usuario.isAdmin ? 'Perfil do Administrador' : usuario.isProfessor ? 'Perfil do Professor' : 'Perfil do Estudante';
             if (elAvatar) elAvatar.textContent = usuario.avatar;
             if (elNome) elNome.textContent = usuario.nome;
             if (elCurso) elCurso.textContent = usuario.curso;
@@ -2698,6 +2729,7 @@ async function carregarDadosApi() {
             if (idSecao === 'admin' && (!usuarioLogado || !usuarioLogado.isAdmin)) {
                 idSecao = 'inicio';
             }
+            if (idSecao === 'professor' && !usuarioLogado?.isProfessor) idSecao = 'inicio';
 
             const secoes = document.querySelectorAll('.secao-conteudo');
             secoes.forEach(secao => secao.classList.remove('ativa'));
@@ -4294,13 +4326,10 @@ async function carregarDadosApi() {
                                     <td>${esc(u.nome)}</td>
                                     <td>
                                         <span class="${ehAdm ? 'badge-admin' : 'badge-aluno'}">
-                                            ${ehAdm ? 'Professor / Admin' : 'Estudante'}
+                                            ${ehAdm ? 'Administrador' : u.isProfessor ? 'Professor' : 'Estudante'}
                                         </span>
                                     </td>
                                     <td style="text-align: right;">
-                                        <button class="btn-acao" style="padding: 4px 8px; font-size: 0.75rem; background: ${ehAdm ? '#777' : '#1e1968'}; margin-right: 4px;" onclick="adminAlternarAdminAluno('${u.matricula}')">
-                                            ${ehAdm ? 'Remover Admin' : 'Tornar Admin'}
-                                        </button>
                                         <button class="btn-acao" style="padding: 4px 8px; font-size: 0.75rem; background: #28a745;" onclick="adminConcederXP('${u.matricula}', 50)">
                                             +50 XP
                                         </button>
@@ -4375,7 +4404,7 @@ async function carregarDadosApi() {
             try {
                 await apiFetch('/api/admin/alunos', {
                     method: 'POST',
-                    body: JSON.stringify({ nome, matricula: mat, isAdmin: tipo === 'admin' })
+                    body: JSON.stringify({ nome, matricula: mat, tipo })
                 });
 
                 document.getElementById('admin-novo-nome').value = '';
@@ -4440,14 +4469,16 @@ async function carregarDadosApi() {
             adminAtualizarKPIs();
         }
 
-        async function adminCriarDesafio(e) {
+        async function adminCriarDesafio(e, perfil = 'admin') {
             e.preventDefault();
-            const titulo = document.getElementById('admin-desafio-titulo').value.trim();
-            const xp = parseInt(document.getElementById('admin-desafio-xp').value) || 100;
-            const prazo = document.getElementById('admin-desafio-prazo').value.trim() || "Semanal";
+            const titulo = document.getElementById(perfil + '-desafio-titulo').value.trim();
+            const xp = parseInt(document.getElementById(perfil + '-desafio-xp').value) || 100;
+            const prazo = document.getElementById(perfil + '-desafio-prazo').value.trim() || "Semanal";
 
             if (!titulo) return;
-
+            const botao = e.currentTarget.querySelector('button[type="submit"]');
+            if (botao.disabled) return;
+            botao.disabled = true;
             try {
                 const data = await apiFetch('/api/desafios', {
                     method: 'POST',
@@ -4459,10 +4490,12 @@ async function carregarDadosApi() {
                 }
                 adminRenderizarDesafios();
 
-                document.getElementById('admin-desafio-titulo').value = '';
+                document.getElementById(perfil + '-desafio-titulo').value = '';
                 alert(`🚀 Desafio "${titulo}" lançado com sucesso para todos os alunos!`);
             } catch (e) {
                 alert('Erro ao criar desafio: ' + e.message);
+            } finally {
+                botao.disabled = false;
             }
         }
 

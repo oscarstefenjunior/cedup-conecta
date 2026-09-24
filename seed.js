@@ -19,13 +19,8 @@ async function main() {
   const totalUsers = await db.prepare('SELECT COUNT(*) as total FROM usuarios').get();
   console.log(`✅ ${totalUsers.total} usuários importados`);
 
-  const admins = ['986300', '9999999999'];
-  const insertAdmin = db.prepare('INSERT INTO admins_matriculas (matricula) VALUES ($1) ON CONFLICT DO NOTHING');
-  for (const m of admins) {
-    await insertAdmin.run(m);
-  }
-  await db.prepare('UPDATE usuarios SET is_admin = 1, curso = $1 WHERE matricula IN ($2, $3)').run('Professor & Administrador CEDUP', ...admins);
-  console.log('✅ Administradores configurados');
+  // A importação não concede nem restaura permissões administrativas.
+  // Os perfis existentes são preservados; novas contas começam como estudantes.
 
   const livros = [
     { id: 1, titulo: 'Organização, Sistemas e Métodos', autor: 'Dorival Carreira; Augusto Cesar Ponce de Leon', editora: 'Atlas', categoria: 'Administracao', edicao: '7ª Edição', ano: '2012', isbn: '978-85-444-0094-3', paginas: 416, formato: 'Fisico', disponivel: 1, capa: 'capas/livro1.jpg', sinopse: 'Obra clássica que aborda os fundamentos de organização, sistemas e métodos para empresas.', previa: 'A eficiência organizacional depende da capacidade de integrar pessoas, processos e tecnologia...' },

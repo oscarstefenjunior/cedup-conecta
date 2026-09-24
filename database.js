@@ -46,10 +46,49 @@ function prepare(sql) {
   };
 }
 
+async function cadastrarLivro({ titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Serializa cadastros para não repetir IDs, mantendo o INTEGER e as referências existentes.
+    await client.query('LOCK TABLE livros IN SHARE ROW EXCLUSIVE MODE');
+    const result = await client.query(`
+      INSERT INTO livros (id, titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa, disponivel)
+      SELECT COALESCE(MAX(id), 0) + 1, $1, $2, $3, $4, $5, $6, $7, $8, $9, 1 FROM livros
+      RETURNING id
+    `, [titulo, autor || '', categoria || 'Geral', formato || 'Fisico', paginas || 0, ano || '', sinopse || '', previa || '', capa || '']);
+    await client.query('COMMIT');
+    return result.rows[0].id;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function cadastrarDesafio({ titulo, tipo, frase, opcoes, respostaCorreta, xp, prazo }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('LOCK TABLE desafios IN SHARE ROW EXCLUSIVE MODE');
+    const result = await client.query(`
+      INSERT INTO desafios (id, titulo, tipo, frase, opcoes, resposta_correta, xp, prazo)
+      SELECT COALESCE(MAX(id), 0) + 1, $1, $2, $3, $4, $5, $6, $7 FROM desafios RETURNING id
+    `, [titulo, tipo, frase, JSON.stringify(opcoes), respostaCorreta, xp, prazo]);
+    await client.query('COMMIT');
+    return result.rows[0].id;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally { client.release(); }
+}
+
 let sessionsReady;
 function initSessions() {
   if (!sessionsReady) {
     sessionsReady = pool.query(`
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS is_professor INTEGER NOT NULL DEFAULT 0;
       CREATE TABLE IF NOT EXISTS sessoes (
         token_hash TEXT PRIMARY KEY,
         matricula TEXT NOT NULL REFERENCES usuarios(matricula) ON DELETE CASCADE,
@@ -82,6 +121,7 @@ async function init() {
       avatar TEXT DEFAULT '',
       curso TEXT DEFAULT '',
       is_admin INTEGER DEFAULT 0,
+      is_professor INTEGER NOT NULL DEFAULT 0,
       xp INTEGER DEFAULT 0,
       criado_em TIMESTAMP DEFAULT NOW()
     );
@@ -270,4 +310,4 @@ async function init() {
   console.log('✅ Tabelas criadas/verificadas no PostgreSQL');
 }
 
-module.exports = { prepare, pool, init, initSessions };
+module.exports = { prepare, pool, init, initSessions, cadastrarLivro, cadastrarDesafio };

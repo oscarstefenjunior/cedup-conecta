@@ -97,9 +97,7 @@ app.post('/api/livros', autenticar, adminOnly, handle(async (req, res) => {
   if (typeof capa !== 'string' || (capa && (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(capa) || Buffer.from(capa.split(',')[1], 'base64').length > 2 * 1024 * 1024))) {
     return res.status(400).json({ erro: 'Envie uma capa JPG, PNG ou WebP de até 2 MB.' });
   }
-  const id = Date.now();
-  await db.prepare(`INSERT INTO livros (id, titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa, disponivel)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`).run(id, titulo, autor || '', categoria || 'Geral', formato || 'Fisico', paginas || 0, ano || '', sinopse || '', previa || '', capa);
+  const id = await db.cadastrarLivro({ titulo, autor, categoria, formato, paginas, ano, sinopse, previa, capa });
   res.json({ id, ok: true });
 }));
 
@@ -341,20 +339,20 @@ app.get('/api/desafios', autenticar, handle(async (req, res) => {
   res.json({ desafios, quizzesRespondidos: respondidos });
 }));
 
-app.post('/api/desafios', autenticar, adminOnly, handle(async (req, res) => {
-  const { titulo, xp, prazo, tipo, frase, opcoes, respostaCorreta } = req.body;
-  if (!titulo) return res.status(400).json({ erro: 'Título obrigatório' });
-  const id = Date.now();
-  await db.prepare('INSERT INTO desafios (id, titulo, tipo, frase, opcoes, resposta_correta, xp, prazo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
-    id, titulo, tipo || 'atividade', frase || '', JSON.stringify(opcoes || []), respostaCorreta || 0, xp || 100, prazo || 'Semanal'
-  );
+app.post('/api/desafios', autenticar, handle(async (req, res) => {
+  if (!req.usuario.isAdmin && !req.usuario.isProfessor) return res.status(403).json({ erro: 'Acesso negado' });
+  const { titulo, xp = 100, prazo, tipo, frase, opcoes, respostaCorreta } = req.body;
+  if (typeof titulo !== 'string' || !titulo.trim()) return res.status(400).json({ erro: 'Título obrigatório' });
+  if (!Number.isInteger(xp) || xp < 0 || xp > 300) return res.status(400).json({ erro: 'A recompensa deve ser de 0 a 300 XP.' });
+  const id = await db.cadastrarDesafio({ titulo: titulo.trim(), tipo: tipo || 'atividade', frase: frase || '',
+    opcoes: opcoes || [], respostaCorreta: respostaCorreta || 0, xp, prazo: prazo || 'Semanal' });
   res.json({
     ok: true,
     desafio: {
       id, titulo, tipo: tipo || 'atividade', frase: frase || '',
       opcoes: JSON.parse(JSON.stringify(opcoes || [])),
       respostaCorreta: respostaCorreta || 0,
-      xp: xp || 100,
+      xp,
       prazo: prazo || 'Semanal'
     }
   });
@@ -440,7 +438,7 @@ app.get('/api/admin/stats', autenticar, adminOnly, handle(async (req, res) => {
 
 app.get('/api/admin/alunos', autenticar, adminOnly, handle(async (req, res) => {
   const alunos = await db.prepare(`
-    SELECT u.matricula, u.nome, u.avatar, u.xp, u.is_admin,
+    SELECT u.matricula, u.nome, u.avatar, u.xp, u.is_admin, u.is_professor,
       (SELECT 1 FROM admins_matriculas am WHERE am.matricula = u.matricula) AS admin_flag
     FROM usuarios u ORDER BY u.nome
   `).all();
@@ -448,19 +446,19 @@ app.get('/api/admin/alunos', autenticar, adminOnly, handle(async (req, res) => {
 }));
 
 app.post('/api/admin/alunos', autenticar, adminOnly, handle(async (req, res) => {
-  const { nome, matricula, isAdmin } = req.body;
+  const { nome, matricula, tipo = 'aluno' } = req.body;
   if (!nome || !matricula) return res.status(400).json({ erro: 'Nome e matrícula obrigatórios' });
+  if (!['aluno', 'professor'].includes(tipo) || req.body.isAdmin) {
+    return res.status(400).json({ erro: 'Novos usuários podem ser estudantes ou professores, sem poderes administrativos.' });
+  }
 
   const existente = await db.prepare('SELECT 1 FROM usuarios WHERE matricula = ?').get(matricula);
   if (existente) return res.status(400).json({ erro: 'Matrícula já cadastrada' });
 
   const senha_hash = bcrypt.hashSync(matricula.substring(0, 6), 10);
-  await db.prepare('INSERT INTO usuarios (matricula, nome, senha_hash, avatar, is_admin) VALUES (?, ?, ?, ?, ?)').run(
-    matricula, nome, senha_hash, nome.charAt(0).toUpperCase(), isAdmin ? 1 : 0
+  await db.prepare('INSERT INTO usuarios (matricula, nome, senha_hash, avatar, is_admin, is_professor) VALUES (?, ?, ?, ?, 0, ?)').run(
+    matricula, nome, senha_hash, nome.charAt(0).toUpperCase(), tipo === 'professor' ? 1 : 0
   );
-  if (isAdmin) {
-    await db.prepare('INSERT INTO admins_matriculas (matricula) VALUES (?) ON CONFLICT DO NOTHING').run(matricula);
-  }
   res.json({ ok: true });
 }));
 
@@ -470,16 +468,7 @@ app.delete('/api/admin/alunos/:matricula', autenticar, adminOnly, handle(async (
 }));
 
 app.put('/api/admin/alunos/:matricula/toggle-admin', autenticar, adminOnly, handle(async (req, res) => {
-  const user = await db.prepare('SELECT is_admin FROM usuarios WHERE matricula = ?').get(req.params.matricula);
-  if (!user) return res.status(404).json({ erro: 'Usuário não encontrado' });
-  const novoAdmin = user.isAdmin ? 0 : 1;
-  await db.prepare('UPDATE usuarios SET is_admin = ? WHERE matricula = ?').run(novoAdmin, req.params.matricula);
-  if (novoAdmin) {
-    await db.prepare('INSERT INTO admins_matriculas (matricula) VALUES (?) ON CONFLICT DO NOTHING').run(req.params.matricula);
-  } else {
-    await db.prepare('DELETE FROM admins_matriculas WHERE matricula = ?').run(req.params.matricula);
-  }
-  res.json({ ok: true, isAdmin: !!novoAdmin });
+  res.status(403).json({ erro: 'Alterações de administradores estão temporariamente desativadas enquanto as permissões são definidas.' });
 }));
 
 app.put('/api/admin/alunos/:matricula/xp', autenticar, adminOnly, handle(async (req, res) => {

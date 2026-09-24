@@ -21,12 +21,14 @@ function criarAutenticacao(db, { seguro = process.env.NODE_ENV === 'production' 
 
   function perfil(user) {
     const isAdmin = user.isAdmin === 1 || user.adminLista === true;
+    const isProfessor = !isAdmin && user.isProfessor === 1;
     return {
       matricula: user.matricula,
       nome: user.nome,
       avatar: user.avatar || user.nome.charAt(0).toUpperCase(),
-      curso: user.curso || (isAdmin ? 'Professor & Administrador CEDUP' : 'Estudante CEDUP Hermann Hering'),
+      curso: user.curso || (isAdmin ? 'Administrador CEDUP' : isProfessor ? 'Professor CEDUP' : 'Estudante CEDUP Hermann Hering'),
       isAdmin,
+      isProfessor,
       xp: user.xp || 0
     };
   }
@@ -70,7 +72,7 @@ function criarAutenticacao(db, { seguro = process.env.NODE_ENV === 'production' 
     try {
       await db.initSessions();
       const user = await db.prepare(`
-        SELECT u.matricula, u.nome, u.avatar, u.curso, u.xp, u.is_admin, u.senha_hash,
+        SELECT u.matricula, u.nome, u.avatar, u.curso, u.xp, u.is_admin, u.is_professor, u.senha_hash,
           s.credencial_hash AS credencial_sessao,
           EXISTS (SELECT 1 FROM admins_matriculas a WHERE a.matricula = u.matricula) AS admin_lista
         FROM sessoes s JOIN usuarios u ON u.matricula = s.matricula
