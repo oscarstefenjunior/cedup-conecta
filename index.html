@@ -2165,7 +2165,7 @@
                                     <input type="text" id="admin-livro-autor" placeholder="Ex: Thomas Cormen" required>
                                 </div>
                                 <div class="form-admin-grupo">
-                                    <label for="admin-livro-categoria">Categoria / Curso</label>
+                                    <label for="admin-livro-categoria">Gênero do livro</label>
                                     <select id="admin-livro-categoria">
                                         <option value="Informática">💻 Informática & TI</option>
                                         <option value="Administração">📊 Administração</option>
@@ -2822,7 +2822,7 @@ async function carregarDadosApi() {
                 grid.innerHTML = `
                     <div style="grid-column: 1 / -1; text-align: center; padding: 40px; background: white; border-radius: 8px; border: 1px dashed #ccc;">
                         <p style="font-size: 1.1rem; color: #666; margin-bottom: 8px;">Nenhum livro encontrado com esses termos.</p>
-                        <small style="color: #999;">Tente pesquisar por outro título, autor ou limpe os filtros de categoria.</small>
+                        <small style="color: #999;">Tente pesquisar por outro título, autor ou limpe os filtros de gênero.</small>
                     </div>
                 `;
                 return;
@@ -4101,7 +4101,7 @@ async function carregarDadosApi() {
                         <tr>
                             <th>Título</th>
                             <th>Autor</th>
-                            <th>Categoria</th>
+                            <th>Gênero</th>
                             <th>Formato</th>
                             <th>Status</th>
                             <th style="text-align: right;">Ações</th>
