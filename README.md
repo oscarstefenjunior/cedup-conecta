@@ -1,5 +1,13 @@
 # CedupConecta — Projeto Liga Jovem
 
+## Oscar: concluir o cadastro dos professores
+
+A atualização de primeiro acesso dos professores já foi publicada na Vercel. Falta importar a lista no banco de produção usando o acesso de quem administra o banco.
+
+**[Abrir o passo a passo completo de importação dos professores](scripts/IMPORTACAO-PROFESSORES.md)** — inclui atualização do projeto, configuração do banco, conferência sem gravar, importação e validação final.
+
+O código de importação está em [`scripts/importar-professores.js`](scripts/importar-professores.js). A lista com 125 professores deve ser recebida no pacote privado `cedup-professores-para-oscar-25092026.zip` e colocada em `auditoria-local/professores.json`. Ela não acompanha o clone: este repositório é público, e os seis primeiros dígitos das matrículas são também as senhas iniciais. O arquivo `.env` com o acesso ao banco também deve permanecer privado.
+
 Plataforma escolar do CEDUP Hermann Hering para consulta ao acervo, empréstimos de livros e materiais, reserva de computadores, achados e perdidos e atividades de incentivo à leitura.
 
 O projeto contém uma interface em HTML/CSS/JavaScript, uma API Node.js/Express e persistência em PostgreSQL. O código foi analisado em **23/09/2026**. Há pendências de segurança e funcionamento antes do uso com dados reais; consulte [ANALISE_DO_PROJETO.md](ANALISE_DO_PROJETO.md).
