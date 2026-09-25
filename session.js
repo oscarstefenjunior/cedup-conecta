@@ -29,6 +29,7 @@ function criarAutenticacao(db, { seguro = process.env.NODE_ENV === 'production' 
       curso: user.curso || (isAdmin ? 'Administrador CEDUP' : isProfessor ? 'Professor CEDUP' : 'Estudante CEDUP Hermann Hering'),
       isAdmin,
       isProfessor,
+      trocarSenha: user.trocarSenha === 1,
       xp: user.xp || 0
     };
   }
@@ -72,7 +73,7 @@ function criarAutenticacao(db, { seguro = process.env.NODE_ENV === 'production' 
     try {
       await db.initSessions();
       const user = await db.prepare(`
-        SELECT u.matricula, u.nome, u.avatar, u.curso, u.xp, u.is_admin, u.is_professor, u.senha_hash,
+        SELECT u.matricula, u.nome, u.avatar, u.curso, u.xp, u.is_admin, u.is_professor, u.senha_hash, u.trocar_senha,
           s.credencial_hash AS credencial_sessao,
           EXISTS (SELECT 1 FROM admins_matriculas a WHERE a.matricula = u.matricula) AS admin_lista
         FROM sessoes s JOIN usuarios u ON u.matricula = s.matricula
@@ -83,6 +84,10 @@ function criarAutenticacao(db, { seguro = process.env.NODE_ENV === 'production' 
         return res.status(401).json({ erro: 'Sessão expirada ou revogada. Entre novamente.' });
       }
       req.usuario = perfil(user);
+      if (req.usuario.trocarSenha && !(
+        (req.method === 'GET' && req.path === '/api/usuario/perfil') ||
+        (req.method === 'POST' && req.path === '/api/usuario/senha')
+      )) return res.status(403).json({ erro: 'Altere sua senha para continuar.', codigo: 'TROCA_SENHA_OBRIGATORIA' });
       next();
     } catch (error) { next(error); }
   }

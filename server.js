@@ -40,6 +40,7 @@ app.post('/api/login', handle(async (req, res) => {
     return res.status(400).json({ erro: 'Matrícula e senha obrigatórias e válidas' });
   }
 
+  await db.initSessions();
   const user = await db.prepare('SELECT * FROM usuarios WHERE matricula = ?').get(matricula);
   if (!user) return res.status(401).json({ erro: 'Matrícula ou senha inválidas' });
 
@@ -53,6 +54,25 @@ app.post('/api/login', handle(async (req, res) => {
 }));
 
 app.post('/api/logout', handle(sessao.encerrar));
+
+app.post('/api/usuario/senha', autenticar, handle(async (req, res) => {
+  const { novaSenha, confirmacao } = req.body;
+  if (typeof novaSenha !== 'string' || novaSenha.length < 8 || Buffer.byteLength(novaSenha, 'utf8') > 72 || novaSenha !== confirmacao) {
+    return res.status(400).json({ erro: 'Informe e confirme uma senha de pelo menos 8 caracteres (máximo de 72 bytes).' });
+  }
+  const user = await db.prepare('SELECT * FROM usuarios WHERE matricula = ?').get(req.usuario.matricula);
+  if (!user.trocarSenha) return res.status(403).json({ erro: 'A troca inicial já foi concluída.' });
+  if (novaSenha === user.matricula || await bcrypt.compare(novaSenha, user.senhaHash)) {
+    return res.status(400).json({ erro: 'Escolha uma senha diferente da matrícula e da senha inicial.' });
+  }
+  const senhaHash = await bcrypt.hash(novaSenha, 10);
+  const atualizado = await db.prepare('UPDATE usuarios SET senha_hash = ?, trocar_senha = 0 WHERE matricula = ? AND senha_hash = ? AND trocar_senha = 1').run(senhaHash, user.matricula, user.senhaHash);
+  if (!atualizado.changes) return res.status(409).json({ erro: 'A senha já foi alterada. Entre novamente.' });
+  await db.prepare('DELETE FROM sessoes WHERE matricula = ?').run(user.matricula);
+  await sessao.iniciar(req, res, { ...user, senhaHash });
+  const admin = await db.prepare('SELECT 1 FROM admins_matriculas WHERE matricula = ?').get(user.matricula);
+  res.json({ usuario: sessao.perfil({ ...user, senhaHash, trocarSenha: 0, adminLista: !!admin }) });
+}));
 
 // ==================== USUARIO ====================
 
@@ -467,7 +487,13 @@ app.get('/api/admin/alunos', autenticar, adminOnly, handle(async (req, res) => {
 }));
 
 app.post('/api/admin/alunos', autenticar, adminOnly, handle(async (req, res) => {
-  const { nome, matricula, tipo = 'aluno' } = req.body;
+  const { nome, tipo = 'aluno' } = req.body;
+  let { matricula } = req.body;
+  if (typeof nome !== 'string' || typeof matricula !== 'string') return res.status(400).json({ erro: 'Nome e matrícula inválidos' });
+  if (tipo === 'professor') {
+    matricula = matricula.replace(/\D/g, '').slice(0, 6);
+    if (matricula.length !== 6) return res.status(400).json({ erro: 'Informe os seis primeiros dígitos da matrícula.' });
+  }
   if (!nome || !matricula) return res.status(400).json({ erro: 'Nome e matrícula obrigatórios' });
   if (!['aluno', 'professor'].includes(tipo) || req.body.isAdmin) {
     return res.status(400).json({ erro: 'Novos usuários podem ser estudantes ou professores, sem poderes administrativos.' });
@@ -477,8 +503,8 @@ app.post('/api/admin/alunos', autenticar, adminOnly, handle(async (req, res) => 
   if (existente) return res.status(400).json({ erro: 'Matrícula já cadastrada' });
 
   const senha_hash = bcrypt.hashSync(matricula.substring(0, 6), 10);
-  await db.prepare('INSERT INTO usuarios (matricula, nome, senha_hash, avatar, is_admin, is_professor) VALUES (?, ?, ?, ?, 0, ?)').run(
-    matricula, nome, senha_hash, nome.charAt(0).toUpperCase(), tipo === 'professor' ? 1 : 0
+  await db.prepare('INSERT INTO usuarios (matricula, nome, senha_hash, avatar, is_admin, is_professor, trocar_senha) VALUES (?, ?, ?, ?, 0, ?, ?)').run(
+    matricula, nome, senha_hash, nome.charAt(0).toUpperCase(), tipo === 'professor' ? 1 : 0, tipo === 'professor' ? 1 : 0
   );
   res.json({ ok: true });
 }));

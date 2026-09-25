@@ -89,6 +89,7 @@ function initSessions() {
   if (!sessionsReady) {
     sessionsReady = pool.query(`
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS is_professor INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS trocar_senha INTEGER NOT NULL DEFAULT 0;
       CREATE TABLE IF NOT EXISTS sessoes (
         token_hash TEXT PRIMARY KEY,
         matricula TEXT NOT NULL REFERENCES usuarios(matricula) ON DELETE CASCADE,

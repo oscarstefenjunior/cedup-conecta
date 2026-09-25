@@ -1751,6 +1751,17 @@
 <body>
 
     <div id="carregando-sessao" role="status" style="margin: auto; padding: 40px; text-align: center;">Carregando sua página…</div>
+    <div id="tela-trocar-senha" style="display:none; position:fixed; inset:0; z-index:10000; background:#f3f4f6; align-items:center; justify-content:center; overflow:auto; padding:20px;">
+        <form class="card-login" onsubmit="event.preventDefault(); concluirTrocaSenha()">
+            <h2>Crie sua nova senha</h2>
+            <p>Antes de continuar, substitua a senha inicial por uma senha pessoal com pelo menos 8 caracteres.</p>
+            <div class="input-group"><label for="nova-senha">Nova senha</label><input id="nova-senha" type="password" autocomplete="new-password" minlength="8" required></div>
+            <div class="input-group"><label for="confirmar-senha">Confirme a nova senha</label><input id="confirmar-senha" type="password" autocomplete="new-password" minlength="8" required></div>
+            <p id="erro-troca-senha" role="alert" style="color:#b91c1c"></p>
+            <button id="btn-trocar-senha" class="btn-acessar" type="submit">Salvar senha e entrar</button>
+            <button type="button" onclick="fazerLogout()" style="margin-top:16px">Sair</button>
+        </form>
+    </div>
     <div id="tela-login">
         <div class="card-login">
             <img src="images.png" alt="Logo Cedup Hermann Hering" class="logo-login">
@@ -1768,7 +1779,7 @@
             </div>
             
             <button id="btn-acessar" class="btn-acessar" onclick="validarLogin()" disabled>Verificando sessão...</button>
-            <div id="erro-mensagem" class="erro-login">Matrícula ou senha incorretos! Digite a matrícula cadastrada e seus 6 primeiros dígitos como senha.</div>
+            <div id="erro-mensagem" class="erro-login">Matrícula ou senha incorretos. Use sua senha pessoal se já realizou a troca inicial.</div>
         </div>
     </div>
 
@@ -2485,6 +2496,16 @@
 
         async function ativarSessao(usuario, novoLogin = false) {
             sessaoAtiva = true;
+            document.getElementById('tela-trocar-senha').style.display = usuario.trocarSenha ? 'flex' : 'none';
+            if (usuario.trocarSenha) {
+                usuarioLogado = usuario;
+                document.getElementById('senha').value = '';
+                document.getElementById('tela-login').style.display = 'none';
+                document.getElementById('sistema-interno').style.display = 'none';
+                document.getElementById('carregando-sessao').style.display = 'none';
+                document.getElementById('nova-senha').focus();
+                return;
+            }
             xpAtual = usuario.xp || 0;
             usuarioLogado = {
                 ...usuario,
@@ -2546,7 +2567,7 @@
             const botao = document.getElementById('btn-acessar');
             botao.disabled = true;
             const matriculaInput = document.getElementById('matricula').value.trim().replace('#', '');
-            const passIn = document.getElementById('senha').value.trim();
+            const passIn = document.getElementById('senha').value;
             const erroMsg = document.getElementById('erro-mensagem');
 
             try {
@@ -2563,6 +2584,23 @@
                 verificandoSessao = false;
                 botao.disabled = false;
             }
+        }
+
+        async function concluirTrocaSenha() {
+            const botao = document.getElementById('btn-trocar-senha');
+            const erro = document.getElementById('erro-troca-senha');
+            botao.disabled = true;
+            erro.textContent = '';
+            try {
+                const data = await apiFetch('/api/usuario/senha', { method: 'POST', body: JSON.stringify({
+                    novaSenha: document.getElementById('nova-senha').value,
+                    confirmacao: document.getElementById('confirmar-senha').value
+                }) });
+                document.getElementById('nova-senha').value = '';
+                document.getElementById('confirmar-senha').value = '';
+                await ativarSessao(data.usuario, true);
+            } catch (e) { erro.textContent = e.message; }
+            finally { botao.disabled = false; }
         }
 
         function atualizarPerfilUsuario(usuario) {

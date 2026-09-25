@@ -92,12 +92,16 @@ async function main() {
     assert.equal(professor.status, 200);
     const promover = await post('/api/admin/alunos', { nome: 'Admin indevido', matricula: '1234567891', tipo: 'professor', isAdmin: true });
     assert.equal(promover.status, 400);
-    const loginProfessor = await post('/api/login', { matricula: '1234567890', senha: '123456' });
+    const loginProfessor = await post('/api/login', { matricula: '123456', senha: '123456' });
     assert.equal(loginProfessor.status, 200);
     const perfilProfessor = (await loginProfessor.json()).usuario;
     assert.equal(perfilProfessor.isAdmin, false);
     assert.equal(perfilProfessor.isProfessor, true);
     cookie = loginProfessor.headers.get('set-cookie').split(';')[0];
+    assert.equal(perfilProfessor.trocarSenha, true);
+    const troca = await post('/api/usuario/senha', { novaSenha: 'professor-teste-nova', confirmacao: 'professor-teste-nova' });
+    assert.equal(troca.status, 200);
+    cookie = troca.headers.get('set-cookie').split(';')[0];
     assert.equal((await editar(3, { titulo: 'Professor não edita' })).status, 403);
     assert.equal((await post('/api/livros', { titulo: 'Professor não pode cadastrar' })).status, 403);
     assert.equal((await post('/api/admin/alunos', { nome: 'Outro', matricula: '1234567892' })).status, 403);
